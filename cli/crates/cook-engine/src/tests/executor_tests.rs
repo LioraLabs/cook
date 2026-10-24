@@ -157,7 +157,7 @@ fn test_executor_runs_single_node() {
         &[],
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
-        &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
         &Default::default(),
     );
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
@@ -187,7 +187,7 @@ fn test_executor_respects_dependencies() {
         &[],
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
-        &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
         &Default::default(),
     );
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
@@ -220,7 +220,7 @@ fn test_executor_failure_cancels_downstream() {
         &[],
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
-        &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
         &Default::default(),
     );
     assert!(result.is_err());
@@ -257,7 +257,7 @@ fn test_executor_parallel_independent_nodes() {
         &[],
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
-        &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
         &Default::default(),
     );
     let elapsed = start.elapsed();
@@ -286,7 +286,7 @@ fn test_executor_empty_dag() {
         &[],
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
-        &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
         &Default::default(),
     );
     assert!(result.is_ok());
@@ -312,7 +312,7 @@ fn test_executor_presatisfied_chain() {
         &[],
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
-        &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
         &Default::default(),
     );
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
@@ -339,7 +339,7 @@ fn test_executor_failure_does_not_cancel_independent() {
         &[],
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
-        &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
         &Default::default(),
     );
     assert!(result.is_err());
@@ -384,7 +384,7 @@ fn command_failure_event_summarizes_without_transport_payload() {
         &[],
         &BTreeMap::new(),
         Arc::new(BTreeMap::new()),
-        &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
         &Default::default(),
     );
     let error = rx
@@ -432,7 +432,7 @@ fn test_executor_interactive_node() {
         &[],
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
-        &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
         &Default::default(),
     );
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
@@ -492,7 +492,7 @@ fn test_executor_output_line_stream_reflects_fd_of_origin() {
         &[],
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
-        &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
         &Default::default(),
     );
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
@@ -628,7 +628,7 @@ fn test_executor_cook162_local_cold_miss_rebuilds() {
         &[],
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
-        &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
         &Default::default(),
     );
     assert!(
@@ -671,7 +671,7 @@ fn test_executor_cook162_pinned_cold_miss_is_fatal() {
         &[],
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
-        &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
         &Default::default(),
     );
     let err = result.expect_err("pinned cold-miss must be fatal");
@@ -724,7 +724,7 @@ fn test_executor_cs_0050_creates_missing_output_parent() {
         &[],
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
-        &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
         &Default::default(),
     );
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
@@ -769,7 +769,7 @@ fn test_executor_cs_0050_parent_is_file_diagnostic() {
         &[],
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
-        &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
         &Default::default(),
     );
     let err = result.expect_err("expected failure when parent is a regular file");
@@ -833,7 +833,7 @@ fn test_executor_cs_0050_idempotent_when_parent_exists() {
         &[],
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
-        &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
         &Default::default(),
     );
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
@@ -916,7 +916,7 @@ fn chore_window_groups_consecutive_chore_steps_into_one_pair() {
         &[],
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
-        &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
         &Default::default(),
     );
     assert!(result.is_ok(), "got: {result:?}");
@@ -1006,7 +1006,7 @@ fn chore_window_failure_mid_run_emits_one_node_failed_with_step_index() {
         &[],
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
-        &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
         &Default::default(),
     );
 
@@ -1061,7 +1061,7 @@ fn non_chore_interactive_still_emits_per_node_pair() {
         &[],
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
-        &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
         &Default::default(),
     );
 
@@ -1148,7 +1148,7 @@ fn chore_window_groups_shell_and_lua_into_one_pair() {
         &[],
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
-        &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
         &Default::default(),
     );
     assert!(result.is_ok(), "got: {result:?}");
@@ -1225,7 +1225,7 @@ fn pure_lua_chore_body_produces_one_drain_window() {
         &[],
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
-        &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
         &Default::default(),
     );
     assert!(result.is_ok(), "got: {result:?}");
@@ -1281,7 +1281,7 @@ fn non_chore_lua_chunk_still_dispatches_to_worker_pool() {
         &[],
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
-        &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
         &Default::default(),
     );
     assert!(result.is_ok(), "got: {result:?}");
@@ -1315,7 +1315,7 @@ fn cook_failure_produces_blocked_test_result() {
     let result = execute_dag(
         dag, 2, BTreeMap::new(), None, cache_ctx, &[], &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
-        &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
         &Default::default(),
     );
 
@@ -1368,7 +1368,7 @@ fn test_line_number_propagates_from_payload_to_events() {
         &[],
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
-        &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
         &Default::default(),
     );
     let test_results = result.expect("test node should pass");
@@ -1426,7 +1426,7 @@ fn test_iteration_item_propagates() {
         &[],
         &BTreeMap::new(),
         std::sync::Arc::new(BTreeMap::new()),
-        &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
         &Default::default(),
     );
     let test_results = result.expect("test node should pass");
@@ -1662,7 +1662,7 @@ fn a_probe_dispatch_always_runs_produce() {
         &[],
         &probe_units_by_node,
         std::sync::Arc::new(BTreeMap::new()),
-        &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
         &Default::default(),
     );
 
@@ -1707,7 +1707,7 @@ fn executor_produce_path_materialises_the_canonical_probes_file() {
         &[],
         &probe_units_by_node,
         std::sync::Arc::new(BTreeMap::new()),
-        &std::sync::atomic::AtomicU64::new(0),
+        &Default::default(),
         &Default::default(),
     );
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
@@ -1773,10 +1773,11 @@ fn an_observing_unit_publishes_its_observation_to_the_shared_store() {
 
     let cm = std::sync::Arc::new(cook_cache::ThreadSafeCacheManager::new(wd.join("idx")));
     let ctx = publish_ctx(wd);
-    let published = std::sync::atomic::AtomicU64::new(0);
+    let published = crate::executor::Published::default();
     let meta = meta_for(":0123456789abcdef", &["in.txt"], &[]);
 
     publish_completion(
+        &test_node("true", "unit", "r", wd.to_path_buf()),
         &cm,
         &meta,
         wd,
@@ -1789,7 +1790,7 @@ fn an_observing_unit_publishes_its_observation_to_the_shared_store() {
     );
 
     assert_eq!(
-        published.load(std::sync::atomic::Ordering::Relaxed),
+        published.count.load(std::sync::atomic::Ordering::Relaxed),
         1,
         "an observing unit's observation counts as a publish"
     );
@@ -1815,12 +1816,13 @@ fn a_refused_observation_stream_leaves_the_stored_manifest_alone() {
 
     let cm = std::sync::Arc::new(cook_cache::ThreadSafeCacheManager::new(wd.join("idx")));
     let ctx = publish_ctx(wd);
-    let published = std::sync::atomic::AtomicU64::new(0);
+    let published = crate::executor::Published::default();
     let meta = meta_for(":0123456789abcdef", &["in.txt"], &[]);
     let publish = |text: &str| {
         let chunk = cook_contracts::OutputChunk::new(cook_contracts::OutputStream::Stdout, text)
             .unwrap();
         publish_completion(
+            &test_node("true", "unit", "r", wd.to_path_buf()),
             &cm,
             &meta,
             wd,
@@ -1857,10 +1859,11 @@ fn a_producing_unit_still_publishes() {
 
     let cm = std::sync::Arc::new(cook_cache::ThreadSafeCacheManager::new(wd.join("idx")));
     let ctx = publish_ctx(wd);
-    let published = std::sync::atomic::AtomicU64::new(0);
+    let published = crate::executor::Published::default();
     let meta = meta_for("out.txt", &["in.txt"], &["out.txt"]);
 
     publish_completion(
+        &test_node("true", "unit", "r", wd.to_path_buf()),
         &cm,
         &meta,
         wd,
@@ -1872,7 +1875,7 @@ fn a_producing_unit_still_publishes() {
         &[],
     );
 
-    assert_eq!(published.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert_eq!(published.count.load(std::sync::atomic::Ordering::Relaxed), 1);
     assert!(
         std::fs::read_dir(wd.join("cloud")).unwrap().next().is_some(),
         "a producing unit's artifact and manifest reach the store"
@@ -1983,7 +1986,7 @@ fn queries_of_a_run_of_two_hits(publish_second: bool) -> Vec<Vec<cook_cache::Clo
             &[],
             &BTreeMap::new(),
             std::sync::Arc::new(BTreeMap::new()),
-            &std::sync::atomic::AtomicU64::new(0),
+            &Default::default(),
             &Default::default(),
         )
         .unwrap();

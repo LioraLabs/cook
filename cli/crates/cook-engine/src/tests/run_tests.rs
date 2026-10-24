@@ -360,3 +360,60 @@ fn cook510_member_consumer_local_srcs_hashes_member_src_a_txt() {
     ));
     assert_eq!(hash, expected, "must be the declaring member's real content hash");
 }
+
+/// Every `tracing` event's message, in order, while `emit` runs on this thread.
+fn warnings_during(emit: impl FnOnce()) -> Vec<String> {
+    use std::sync::{Arc, Mutex};
+    struct Collect(Arc<Mutex<Vec<String>>>);
+    struct Message(String);
+    impl tracing::field::Visit for Message {
+        fn record_debug(&mut self, f: &tracing::field::Field, v: &dyn std::fmt::Debug) {
+            if f.name() == "message" {
+                self.0 = format!("{v:?}");
+            }
+        }
+    }
+    impl tracing::Subscriber for Collect {
+        fn enabled(&self, _: &tracing::Metadata<'_>) -> bool { true }
+        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id { tracing::span::Id::from_u64(1) }
+        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+        fn event(&self, e: &tracing::Event<'_>) {
+            let mut m = Message(String::new());
+            e.record(&mut m);
+            self.0.lock().unwrap().push(m.0);
+        }
+        fn enter(&self, _: &tracing::span::Id) {}
+        fn exit(&self, _: &tracing::span::Id) {}
+    }
+    let seen = Arc::new(Mutex::new(vec![]));
+    tracing::subscriber::with_default(Collect(seen.clone()), emit);
+    let all = seen.lock().unwrap().clone();
+    all
+}
+
+/// A store that is down is told once per run, not once per process: a serve
+/// loop runs again on every change, and a later outage must not be silent.
+#[test]
+fn each_run_in_one_process_reports_an_unavailable_store() {
+    let root = tempfile::tempdir().unwrap();
+    // A store directory beneath a regular file can never be created or read.
+    std::fs::write(root.path().join("not-a-dir"), "").unwrap();
+    std::fs::create_dir_all(root.path().join(".cook")).unwrap();
+    std::fs::write(
+        root.path().join(".cook/cloud.toml"),
+        format!("[cache]\ncache_dir = {:?}\n", root.path().join("not-a-dir/store").to_string_lossy()),
+    )
+    .unwrap();
+    let ws = empty_registered_workspace();
+    let (edges, reachable) = (BTreeMap::new(), BTreeSet::new());
+    let run_once = || {
+        run(root.path(), &ws, &edges, &reachable, 1, &[], false, false, false, |_| {}).unwrap();
+    };
+    let seen = warnings_during(|| {
+        run_once();
+        run_once();
+    });
+    let down: Vec<_> = seen.iter().filter(|m| m.starts_with("cache store unavailable (")).collect();
+    assert_eq!(down.len(), 2, "one per run:\n{seen:#?}");
+}

@@ -610,6 +610,91 @@ fn puts_claiming_every_exempt_kind_are_reclaimed_by_a_store_size_sweep() {
     assert!(!manifest.exists(), "the manifest beside an exempt-kind blob survived --max-size");
 }
 
+// ── Warnings reach stderr ────────────────────────────────────────────────────
+
+/// A unit whose one output is 2 MiB, over a `--max-artifact-mib 1` cap.
+const BIG_OUTPUT_UNIT: &str = "recipe build\n    cook.add_unit({\n        name = \"build-step\",\n        inputs = {\"src/in.txt\"},\n        outputs = {\"out.bin\"},\n        command = \"head -c 2097152 /dev/zero > out.bin\",\n    })\n";
+
+fn stderr_of(out: &std::process::Output) -> String {
+    String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
+fn lines_containing<'a>(text: &'a str, needle: &str) -> Vec<&'a str> {
+    text.lines().filter(|l| l.contains(needle)).collect()
+}
+
+/// A checkout whose store is an endpoint nobody listens on, failing fast.
+fn dead_store_checkout(tmp: &TempDir, cookfile: &str) -> std::path::PathBuf {
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let wd = checkout(tmp, "dead", &format!("127.0.0.1:{port}"), cookfile, true);
+    let mut cfg = std::fs::read_to_string(wd.join(".cook/cloud.toml")).unwrap();
+    cfg.push_str("timeout_secs = 1\nmax_retries = 0\n");
+    std::fs::write(wd.join(".cook/cloud.toml"), cfg).unwrap();
+    wd
+}
+
+#[test]
+fn a_refused_put_prints_one_line_naming_the_unit_and_never_the_token() {
+    let tmp = TempDir::new().unwrap();
+    let (_served, addr, _log) = start_with(&tmp, &["--max-artifact-mib", "1"]);
+    let wd = checkout(&tmp, "a", &addr, BIG_OUTPUT_UNIT, true);
+    let err = stderr_of(&run_in(&tmp, &wd, &["build"]));
+    let failed = lines_containing(&err, "cache upload for");
+    assert_eq!(failed.len(), 1, "one line for the one unit:\n{err}");
+    assert!(
+        failed[0].starts_with("cook: warning: cache upload for head -c 2097152 /dev/zero > out.bin failed: "),
+        "names the unit (as the progress line does): {}",
+        failed[0]
+    );
+    assert!(!err.contains(TOKEN), "the token never reaches stderr:\n{err}");
+}
+
+#[test]
+fn an_unreachable_store_warns_once_per_failure_not_once_per_put() {
+    let tmp = TempDir::new().unwrap();
+    let wd = dead_store_checkout(&tmp, DEPFILE_DIR_UNIT);
+    let err = stderr_of(&run_in(&tmp, &wd, &["build"]));
+    // One `cook build` builds two cache contexts; the health line is told once.
+    assert_eq!(
+        lines_containing(&err, "cook: warning: cache store unavailable").len(),
+        1,
+        "the health failure is visible, once:\n{err}"
+    );
+    // The unit has an output, a depfile, two manifests and an observation to put; only the first failure is told.
+    assert_eq!(lines_containing(&err, "cache upload for").len(), 1, "one line for the one unit:\n{err}");
+    assert_eq!(lines_containing(&err, "cache backend put failed").len(), 0, "{err}");
+    assert!(!err.contains(TOKEN), "{err}");
+}
+
+/// Three units to publish, each with one output.
+const THREE_UNITS: &str = "recipe build\n    cook.add_unit({\n        name = \"unit-a\",\n        inputs = {\"src/in.txt\"},\n        outputs = {\"a.txt\"},\n        command = \"cp src/in.txt a.txt\",\n    })\n    cook.add_unit({\n        name = \"unit-b\",\n        inputs = {\"src/in.txt\"},\n        outputs = {\"b.txt\"},\n        command = \"cp src/in.txt b.txt\",\n    })\n    cook.add_unit({\n        name = \"unit-c\",\n        inputs = {\"src/in.txt\"},\n        outputs = {\"c.txt\"},\n        command = \"cp src/in.txt c.txt\",\n    })\n";
+
+#[test]
+fn a_dead_store_names_the_first_unit_and_counts_the_rest() {
+    let tmp = TempDir::new().unwrap();
+    let wd = dead_store_checkout(&tmp, THREE_UNITS);
+    let err = stderr_of(&run_in(&tmp, &wd, &["build"]));
+    let first = lines_containing(&err, "cache upload for");
+    assert_eq!(first.len(), 1, "the first failure is told in full, once:\n{err}");
+    assert!(first[0].starts_with("cook: warning: cache upload for cp src/in.txt "), "{err}");
+    let more = lines_containing(&err, "cache upload failed for");
+    assert_eq!(more.len(), 1, "one summary line:\n{err}");
+    assert_eq!(more[0], "cook: warning: cache upload failed for 2 more unit(s); not published", "{err}");
+}
+
+#[test]
+fn a_json_command_keeps_stdout_json_while_its_warnings_go_to_stderr() {
+    let tmp = TempDir::new().unwrap();
+    let wd = dead_store_checkout(&tmp, CP_UNIT);
+    let out = run_in(&tmp, &wd, &["cache", "verify", "--json"]);
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout)
+        .unwrap_or_else(|e| panic!("stdout is one JSON document ({e}):\n{}", String::from_utf8_lossy(&out.stdout)));
+    assert!(report["units"].is_array(), "{report}");
+    let err = stderr_of(&out);
+    assert!(err.contains("cook: warning: cache store unavailable"), "warning on stderr:\n{err}");
+    assert!(!String::from_utf8_lossy(&out.stdout).contains("warning"), "stdout stays JSON only");
+}
+
 #[test]
 fn a_wrong_token_is_a_miss_with_a_warning_never_a_failed_build() {
     let tmp = TempDir::new().unwrap();

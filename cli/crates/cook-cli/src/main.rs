@@ -32,6 +32,9 @@ fn main() {
     // Must precede argument parsing: when the shell is asking for candidates
     // the argv is a completion request, not a command, and this never returns.
     completion::complete();
+    // After `complete()`: completion builds a cache context, and a warning during
+    // tab completion would corrupt the shell's candidate list.
+    diagnostics::install_stderr_subscriber();
 
     let version_string: &'static str = Box::leak(Box::new(format!(
         "{} (Cook Standard v{})",

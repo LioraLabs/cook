@@ -162,6 +162,16 @@ where
         }
     };
     Arc::make_mut(&mut cache_ctx).replay_logs = replay_logs;
+    // Checked here, once per run, not where contexts are built: one invocation
+    // builds several (register, run), and a serve loop runs many times. The
+    // build goes on: a failed lookup is a miss and a failed upload is dropped,
+    // so the wording promises no more than that. `e` carries the status and
+    // server body, never the token.
+    if let Err(e) = cache_ctx.backend.health() {
+        tracing::warn!(
+            "cache store unavailable ({e}); building anyway: lookups that fail are misses, uploads that fail are dropped"
+        );
+    }
     run_with_cache_ctx(
         cache_ctx,
         registered_workspace,
@@ -488,7 +498,7 @@ where
     // bumped once per publish inside the executor, read back below once every
     // worker has joined. Only its zero / non-zero-ness is consumed. See
     // `RunResult::published_count` for what the gate does and does not claim.
-    let published = std::sync::atomic::AtomicU64::new(0);
+    let published = executor::Published::default();
     let probe_values = cook_probe::store::ProbeValueStore::new();
 
     let (event_tx, event_rx) = mpsc::channel::<EngineEvent>();
@@ -532,13 +542,14 @@ where
             reachable,
             &recon_managers,
             &prior_outputs_by_recipe,
+            &published.flush_warned,
         )
     };
 
     let output_glob_warnings = collect_output_glob_warnings(registered_workspace, reachable);
     // Every worker has joined by now (execute_dag returned), so a single
     // relaxed load sees the run's total.
-    let published_count = published.load(std::sync::atomic::Ordering::Relaxed);
+    let published_count = published.count.load(std::sync::atomic::Ordering::Relaxed);
     Ok(RunResult {
         test_results,
         swept,
@@ -587,6 +598,25 @@ fn collect_output_glob_warnings_for_recipe(
 }
 
 
+/// Persists every recipe cache and says so once if any would not save: managers
+/// often share a directory, so each failure would otherwise print the same line.
+/// Once per run (`warned`): the run flushes again after reconciling, and a
+/// cache that would not save the first time fails the same way the second.
+pub(crate) fn flush_caches<'a>(
+    cms: impl IntoIterator<Item = &'a Arc<ThreadSafeCacheManager>>,
+    warned: &std::sync::atomic::AtomicBool,
+) {
+    let failed: Vec<_> = cms.into_iter().filter_map(|cm| cm.flush_all().err()).collect();
+    if let Some(first) = failed.first() {
+        if !warned.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            tracing::warn!(
+                "recipe cache not persisted for {} recipe(s), the first: {first}; next run will re-execute",
+                failed.len()
+            );
+        }
+    }
+}
+
 /// Sweep stale outputs for every reached recipe (§17.7).
 ///
 /// Builds the cross-recipe *live* output set (every output declared by any
@@ -602,6 +632,7 @@ fn reconcile_outputs(
     reachable: &BTreeSet<String>,
     cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
     prior_outputs_by_recipe: &BTreeMap<String, BTreeMap<PathBuf, u64>>,
+    flush_warned: &std::sync::atomic::AtomicBool,
 ) -> (Vec<PathBuf>, Vec<PathBuf>) {
     let mut all_swept: Vec<PathBuf> = Vec::new();
     let mut all_kept_modified: Vec<PathBuf> = Vec::new();
@@ -664,11 +695,7 @@ fn reconcile_outputs(
     }
 
     // Persist any pruned caches (flush_all is a no-op for unchanged recipes).
-    for cm in cache_managers.values() {
-        if let Err(e) = cm.flush_all() {
-            tracing::warn!("recipe cache not persisted: {e}; next run will re-execute");
-        }
-    }
+    flush_caches(cache_managers.values(), flush_warned);
 
     all_swept.sort();
     all_kept_modified.sort();
@@ -761,20 +788,6 @@ pub(crate) fn build_cache_ctx_with(
             cloud_config.backend_config(),
         ))
     };
-    // On stderr, not tracing: nothing installs a subscriber, and a wrong token
-    // or an unreachable server must be visible. The build goes on: a failed
-    // lookup is a miss and a failed upload is dropped. The backend stays in
-    // use, so the wording promises no more than that. `e` carries the status
-    // and server body, never the token. Once per process: one invocation
-    // builds more than one cache context.
-    if let Err(e) = backend.health() {
-        static WARNED: std::sync::Once = std::sync::Once::new();
-        WARNED.call_once(|| {
-            eprintln!(
-                "cook: warning: cache store unavailable ({e}); building anyway: lookups that fail are misses, uploads that fail are dropped"
-            )
-        });
-    }
     // CS-0196 (COOK-364): key-side identity is configured-or-empty. The
     // directory-name fallback never enters a key.
     let project_id = cloud_config.project_id_for_keys();

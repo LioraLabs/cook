@@ -239,8 +239,8 @@ pub fn reconcile_dir_output(working_dir: &Path, root: &str, kept: &BTreeSet<Stri
     }
     let rel = unit_relative(root, &wd);
     if !crate::no_link_on_the_way(working_dir, Path::new(&rel)) {
-        eprintln!(
-            "cook: warning: directory output {root:?} is reached through a symlink, so Cook does not sweep it: files there the command did not write stay"
+        tracing::warn!(
+            "directory output {root:?} is reached through a symlink, so Cook does not sweep it: files there the command did not write stay"
         );
         return;
     }

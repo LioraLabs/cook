@@ -820,3 +820,18 @@ fn a_big_manifest_beside_a_small_blob_is_counted_and_freed() {
     assert_eq!(parse_free_line(&text), (1, "4.0 MB".to_string()), "{text}");
     assert!(!blob.exists() && !manifest.exists());
 }
+
+#[test]
+fn victims_that_cannot_be_locked_are_reported_in_one_line() {
+    let fx = Fixture::new();
+    let keys: Vec<[u8; 32]> = (0..3).map(|i| fx.seed(i, 1_000_000, (3 - i) as u64 * 1000, None, "/Cookfile::build")).collect();
+    // A directory where the shard's lock file belongs (the seeded keys share one shard):
+    // the open fails whoever runs it, root included.
+    let (blob, _, _) = object_paths(&fx.cache_dir, &keys[0]);
+    fs::create_dir(blob.with_file_name("lock")).unwrap();
+    let gc = fx.run(&["cache", "gc", "--max-size", "1"]);
+    let err = String::from_utf8_lossy(&gc.stderr);
+    let lines: Vec<_> = err.lines().filter(|l| l.contains("evict:")).collect();
+    assert_eq!(lines.len(), 1, "one line for three victims:\n{err}");
+    assert!(lines[0].starts_with("cook: warning: evict: 3 object(s) skipped, the first: lock shard of "), "{err}");
+}

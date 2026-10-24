@@ -258,3 +258,20 @@ fn check_schema_version_rejects_invalid_json() {
     let err = check_schema_version("{not json").expect_err("garbage must be refused");
     assert!(matches!(err, SchemaCheckError::InvalidJson(_)));
 }
+
+#[test]
+fn each_record_is_one_write_so_a_concurrent_line_cannot_land_inside_it() {
+    struct Writes(Vec<Vec<u8>>);
+    impl Write for Writes {
+        fn write(&mut self, b: &[u8]) -> io::Result<usize> {
+            self.0.push(b.to_vec());
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> io::Result<()> { Ok(()) }
+    }
+    let state = make_state_with_one_recipe();
+    let mut out = Writes(vec![]);
+    JsonWriter::new(&mut out).handle(&state, &ProgressEvent::RecipeStarted { recipe: RecipeId::new(0) }).unwrap();
+    assert_eq!(out.0.len(), 1, "writes: {:?}", out.0);
+    assert!(out.0[0].ends_with(b"\n"));
+}

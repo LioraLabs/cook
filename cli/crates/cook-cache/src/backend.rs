@@ -533,7 +533,7 @@ impl LocalBackend {
                             // Pre-CS-0054 sidecars carry the zero sentinel:
                             // "no recorded hash", write through.
                             if existing.content_hash == zero {
-                                tracing::warn!(
+                                tracing::debug!(
                                     "cache idempotency: legacy sentinel content_hash at {}; treating as no prior artifact",
                                     meta_path.display(),
                                 );
@@ -569,7 +569,7 @@ impl LocalBackend {
                         }
                         Err(e) => {
                             // Malformed sidecar: no recoverable hash, write through.
-                            tracing::warn!(
+                            tracing::debug!(
                                 "cache idempotency: malformed sidecar at {} ({e}); treating as no prior artifact",
                                 meta_path.display(),
                             );
@@ -578,7 +578,7 @@ impl LocalBackend {
                 }
                 Err(e) if e.kind() == io::ErrorKind::NotFound => {
                     // Missing sidecar: partial write recovery, write through.
-                    tracing::warn!(
+                    tracing::debug!(
                         "cache idempotency: missing sidecar for {}; treating as no prior artifact",
                         path.display(),
                     );
@@ -911,6 +911,7 @@ impl LocalBackend {
     /// extra guard is needed here.
     pub fn apply_eviction(&self, plan: &EvictPlan) -> BackendResult<EvictOutcome> {
         let mut outcome = EvictOutcome::default();
+        let mut skipped: Vec<io::Error> = Vec::new();
 
         for victim in &plan.victims {
             // One victim per acquisition, so a writer never waits out the whole plan.
@@ -918,7 +919,7 @@ impl LocalBackend {
                 Ok(l) => l,
                 Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
                 Err(e) => {
-                    tracing::warn!("evict: {e}; skipped");
+                    skipped.push(e);
                     continue;
                 }
             };
@@ -936,6 +937,9 @@ impl LocalBackend {
             }
         }
 
+        if let Some(first) = skipped.first() {
+            tracing::warn!("evict: {} object(s) skipped, the first: {first}", skipped.len());
+        }
         Ok(outcome)
     }
 }

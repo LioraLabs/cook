@@ -22,6 +22,7 @@ use cook_contracts::{CommandFailure, WorkPayload};
 use cook_dag::Dag;
 use cook_execute::{WorkItem, WorkerPool};
 
+use crate::run::flush_caches;
 use crate::{EngineError, EngineEvent, NodeKind, RecipeKind, WorkNode};
 
 // ---------------------------------------------------------------------------
@@ -502,7 +503,7 @@ pub fn execute_dag(
     rerun_patterns: &[String],
     probe_units_by_node: &BTreeMap<usize, (cook_contracts::ProbeUnit, std::path::PathBuf, bool)>,
     dep_outputs: cook_execute::WorkerDepOutputs,
-    published: &AtomicU64,
+    published: &Published,
     probe_values: &cook_probe::store::ProbeValueStore,
 ) -> Result<Vec<crate::TestResult>, EngineError> {
     // Empty DAG — nothing to do.
@@ -1405,7 +1406,7 @@ pub fn execute_dag(
         // The declared probes reachable from this DAG, by node id: what a
         // probe dispatch needs to resolve a value before reaching a worker.
         probe_units_by_node: &BTreeMap<usize, (cook_contracts::ProbeUnit, std::path::PathBuf, bool)>,
-        published: &AtomicU64,
+        published: &Published,
         // Nodes that hit the cache this run and may need publishing.
         backfill: &mut Vec<usize>,
     ) -> usize {
@@ -2644,6 +2645,7 @@ pub fn execute_dag(
                             if let Some(cm) = cache_managers.get(&dag.node(id).payload().recipe_name) {
                                 let working_dir = dag.node(id).payload().working_dir.clone();
                                 publish_completion(
+                                    work_node,
                                     cm,
                                     meta,
                                     &working_dir,
@@ -2806,6 +2808,7 @@ pub fn execute_dag(
                 if let Some(cm) = cache_managers.get(&dag.node(result.id).payload().recipe_name) {
                     let working_dir = dag.node(result.id).payload().working_dir.clone();
                     publish_completion(
+                        work_node,
                         cm,
                         meta,
                         &working_dir,
@@ -3109,16 +3112,16 @@ pub fn execute_dag(
     let probe_store = pool.probe_value_store();
     pool.shutdown();
     // Flush cache updates to disk
-    for cm in cache_managers.values() {
-        if let Err(e) = cm.flush_all() {
-            tracing::warn!("recipe cache not persisted: {e}; next run will re-execute");
-        }
-    }
+    flush_caches(cache_managers.values(), &published.flush_warned);
 
     // Backfill never writes the local index, so persisting first loses nothing
     // and a slow or interrupted remote cannot cost the run's records.
     let candidates: Vec<&WorkNode> = backfill_ids.iter().map(|&i| dag.node(i).payload()).collect();
     backfill_shared(&candidates, &cache_managers, &probe_store, &cache_ctx, published);
+    let more = published.failed.load(Ordering::Relaxed).saturating_sub(1);
+    if more > 0 {
+        tracing::warn!("cache upload failed for {more} more unit(s); not published");
+    }
 
     if failures.is_empty() {
         // Merge cached_test_results (from test cache hits synthesized during
@@ -3148,6 +3151,18 @@ pub fn execute_dag(
     }
 }
 
+/// One run's counters, owned by the caller of `execute_dag` and read back once
+/// the run is over; what a run says once is remembered here, not in a global.
+#[derive(Default)]
+pub struct Published {
+    /// Units that began publishing (the CAS budget gate; see `RunResult::published_count`).
+    pub count: AtomicU64,
+    /// Units whose upload failed.
+    pub failed: AtomicU64,
+    /// Whether the run has already said a recipe cache would not save.
+    pub flush_warned: std::sync::atomic::AtomicBool,
+}
+
 /// Single-source completion, shared by both completion sites (the restored /
 /// interactive path and the freshly-executed worker path). The two call sites
 /// differ only in which node id sources `working_dir`. This records the unit
@@ -3160,6 +3175,7 @@ pub fn execute_dag(
 /// `ProbeValueStore`. Behaviour-preserving extraction of the two ~210-line
 /// blocks (COOK-91 review C1).
 fn publish_completion(
+    unit: &WorkNode,
     cm: &ThreadSafeCacheManager,
     meta: &cook_contracts::CacheMeta,
     // CS-0186: the input set actually judged, when it is not the declared one.
@@ -3168,7 +3184,7 @@ fn publish_completion(
     output_chunks: &[cook_contracts::OutputChunk],
     probe_store: &cook_probe::store::ProbeValueStore,
     cache_ctx: &CacheContext,
-    published: &AtomicU64,
+    published: &Published,
     // CS-0204: the module files this unit's Lua body loaded, as reported by
     // the VM that ran it. Empty for a unit that ran no Lua, and for the
     // interactive path (a spawned terminal session loads no module).
@@ -3330,6 +3346,7 @@ fn publish_completion(
     }
 
     upload_completion(
+        unit,
         meta,
         &step_entry,
         &output_log,
@@ -3361,7 +3378,7 @@ fn backfill_shared(
     cache_managers: &BTreeMap<String, Arc<ThreadSafeCacheManager>>,
     probe_store: &cook_probe::store::ProbeValueStore,
     cache_ctx: &CacheContext,
-    published: &AtomicU64,
+    published: &Published,
 ) {
     let mut found = Vec::new();
     for node in candidates {
@@ -3413,7 +3430,7 @@ fn backfill_shared(
         derived.extend(empty_dirs.iter().map(String::as_str));
         let recorded: Vec<&str> = entry.outputs.iter().map(|r| &*r.path).collect();
         if derived != recorded {
-            tracing::warn!("cache backfill: {} skipped: declared outputs differ from the recorded entry", meta.recipe_name);
+            tracing::warn!("cache backfill: {} skipped: declared outputs differ from the recorded entry", node.display_name());
             continue;
         }
         // Publication must not trust mtime (as needs_rebuild_cook does): these bytes go to
@@ -3426,12 +3443,12 @@ fn backfill_shared(
             .chain(entry.outputs.iter().filter(|r| r.hash != 0))
             .find(|r| cook_cache::record_file(&r.path, wd).is_none_or(|now| now.hash != r.hash));
         if let Some(r) = stale {
-            tracing::warn!("cache backfill: {} skipped: {} changed since it was recorded", meta.recipe_name, r.path);
+            tracing::warn!("cache backfill: {} skipped: {} changed since it was recorded", node.display_name(), r.path);
             continue;
         }
         let observed = entry.observed.as_ref().expect("filtered above");
         let log = cook_contracts::cache::observation::OutputLog::new(vec![], observed.log_bytes());
-        upload_completion(meta, &entry, &log, wd, seal, &judged, &outputs, &empty_dirs, &probes, cache_ctx, published);
+        upload_completion(node, meta, &entry, &log, wd, seal, &judged, &outputs, &empty_dirs, &probes, cache_ctx, published);
     }
 }
 
@@ -3526,8 +3543,15 @@ fn replayed_log(
 /// inputs, outputs incl. the implicit depfile output and trailing empty-dir
 /// records, observation). Gated by the unit's sharing and the run's publish
 /// mode; a no-op when either forbids it.
+///
+/// The first failed put ends the upload: the store is unreachable or refusing,
+/// so later puts would only repeat it, and nothing is published past the
+/// failure, the observation (the backfill's presence key) included. The first
+/// failed unit of a run is named in full; the rest are counted for the summary
+/// `execute_dag` prints at the end.
 #[allow(clippy::too_many_arguments)]
 fn upload_completion(
+    unit: &WorkNode,
     meta: &cook_contracts::CacheMeta,
     entry: &cook_cache::StepEntry,
     output_log: &cook_contracts::cache::observation::OutputLog,
@@ -3538,398 +3562,396 @@ fn upload_completion(
     empty_dir_paths: &[String],
     probe_store: &cook_probe::store::ProbeValueStore,
     cache_ctx: &CacheContext,
-    published: &AtomicU64,
+    published: &Published,
 ) {
-    // COOK-162 §3: `local` units never publish to the shared store.
-    // COOK-168: publish-off / read-only client mode suppresses ALL uploads
-    // globally; fetch-by-key is unaffected.
-    if meta.sharing.is_local() || !cache_ctx.publish_enabled {
-        return;
-    }
-    let cloud_k = entry_cloud_key(meta, entry, seal_contrib);
-    let recipe_namespace =
-        recipe_namespace(&meta.project_id, &meta.cookfile_path, &meta.recipe_name);
-    let observation_bytes = output_log.encode();
-    // Coarse zero / non-zero gate for the end-of-run CAS budget check: this
-    // unit is about to write at least a determinant manifest to the store.
-    published.fetch_add(1, Ordering::Relaxed);
-
-    // Upload one artifact per declared output (2026-05-02 addendum spec §5.1).
-    // Each artifact is keyed by artifact_key(cloud_key, idx, path) so a future
-    // cache hit can restore them all independently.
-    // CS-0085: iterate the resolved (glob-expanded) list.
-    for (out_idx, output_path) in resolved_output_paths.iter().enumerate() {
-        let abs_output = working_dir.join(output_path);
-        // COOK-180: classify each output via symlink_metadata (does NOT follow
-        // links) so per-file fidelity round-trips: a regular file stores its real
-        // bytes + mode; a symlink stores no content, just kind+target; a dir
-        // stores an empty marker. The restore side (restore_one) dispatches on
-        // `kind`, so the empty body for symlink/dir kinds is intentional.
-        let lstat = match std::fs::symlink_metadata(&abs_output) {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-        let ft = lstat.file_type();
-        #[cfg(unix)]
-        let mode = std::os::unix::fs::PermissionsExt::mode(&lstat.permissions());
-        #[cfg(not(unix))]
-        let mode = 0o644u32;
-        // The body is a reader, not a buffer: an output can be larger than RAM,
-        // and `put` streams.
-        let (mut body, kind, target): (Box<dyn std::io::Read>, Option<String>, Option<String>) = if ft.is_symlink() {
-            let t = std::fs::read_link(&abs_output)
-                .ok()
-                .and_then(|p| p.to_str().map(String::from));
-            // A symlink whose target isn't valid UTF-8 can't be recorded — skip it.
-            match t {
-                Some(t) => (
-                    Box::new(std::io::empty()),
-                    Some(artifact_kind::SYMLINK.to_string()),
-                    Some(t),
-                ),
-                None => continue,
-            }
-        } else if ft.is_dir() {
-            (Box::new(std::io::empty()), Some(artifact_kind::DIR.to_string()), None)
-        } else {
-            match std::fs::File::open(&abs_output) {
-                Ok(f) => (Box::new(f), None, None),
-                Err(_) => continue,
-            }
-        };
-        let artifact_k = artifact_key(&cloud_k, out_idx as u32, output_path);
-        let mut artifact_meta = ArtifactMeta {
-            recipe_namespace: recipe_namespace.clone(),
-            command_hash: meta.command_hash,
-            env_contribution: meta.env_contribution,
-            seal_contribution: seal_contrib,
-            schema_version: CACHE_VERSION,
-            size_bytes: if ft.is_file() { lstat.len() } else { 0 },
-            tags: std::collections::BTreeSet::new(),
-            consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
-            output_index: out_idx as u32,
-            output_path: output_path.clone(),
-            // CS-0054: stamped by the backend on put.
-            content_hash: ArtifactMeta::zero_content_hash(),
-            kind,
-            mode,
-            target,
-        };
-        if let Err(e) = cache_ctx.backend.put(&artifact_k, &mut *body, &mut artifact_meta) {
-            tracing::warn!("cache backend put failed for {}: {}", output_path, e);
+    let outcome = (|| -> Result<(), String> {
+        // COOK-162 §3: `local` units never publish to the shared store.
+        // COOK-168: publish-off / read-only client mode suppresses ALL uploads
+        // globally; fetch-by-key is unaffected.
+        if meta.sharing.is_local() || !cache_ctx.publish_enabled {
+            return Ok(());
         }
-    }
+        let cloud_k = entry_cloud_key(meta, entry, seal_contrib);
+        let recipe_namespace =
+            recipe_namespace(&meta.project_id, &meta.cookfile_path, &meta.recipe_name);
+        let observation_bytes = output_log.encode();
+        // Coarse zero / non-zero gate for the end-of-run CAS budget check: this
+        // unit is about to write at least a determinant manifest to the store.
+        published.count.fetch_add(1, Ordering::Relaxed);
 
-    // Upload the depfile as an implicit artifact at index outputs.len() so a
-    // future restore can pull it back.
-    // CS-0085: depfile_idx uses the resolved count to match the index
-    // record_completion appended it at.
-    if let Some(di) = &meta.discovered_inputs {
-        let depfile_idx = resolved_output_paths.len() as u32;
-        let abs_depfile = working_dir.join(&di.from);
-        match std::fs::read(&abs_depfile) {
-            Ok(bytes) => {
-                let artifact_k = artifact_key(&cloud_k, depfile_idx, &di.from);
-                let mut artifact_meta = ArtifactMeta {
+        // Upload one artifact per declared output (2026-05-02 addendum spec §5.1).
+        // Each artifact is keyed by artifact_key(cloud_key, idx, path) so a future
+        // cache hit can restore them all independently.
+        // CS-0085: iterate the resolved (glob-expanded) list.
+        for (out_idx, output_path) in resolved_output_paths.iter().enumerate() {
+            let abs_output = working_dir.join(output_path);
+            // COOK-180: classify each output via symlink_metadata (does NOT follow
+            // links) so per-file fidelity round-trips: a regular file stores its real
+            // bytes + mode; a symlink stores no content, just kind+target; a dir
+            // stores an empty marker. The restore side (restore_one) dispatches on
+            // `kind`, so the empty body for symlink/dir kinds is intentional.
+            let lstat = match std::fs::symlink_metadata(&abs_output) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            let ft = lstat.file_type();
+            #[cfg(unix)]
+            let mode = std::os::unix::fs::PermissionsExt::mode(&lstat.permissions());
+            #[cfg(not(unix))]
+            let mode = 0o644u32;
+            // The body is a reader, not a buffer: an output can be larger than RAM,
+            // and `put` streams.
+            let (mut body, kind, target): (Box<dyn std::io::Read>, Option<String>, Option<String>) = if ft.is_symlink() {
+                let t = std::fs::read_link(&abs_output)
+                    .ok()
+                    .and_then(|p| p.to_str().map(String::from));
+                // A symlink whose target isn't valid UTF-8 can't be recorded — skip it.
+                match t {
+                    Some(t) => (
+                        Box::new(std::io::empty()),
+                        Some(artifact_kind::SYMLINK.to_string()),
+                        Some(t),
+                    ),
+                    None => continue,
+                }
+            } else if ft.is_dir() {
+                (Box::new(std::io::empty()), Some(artifact_kind::DIR.to_string()), None)
+            } else {
+                match std::fs::File::open(&abs_output) {
+                    Ok(f) => (Box::new(f), None, None),
+                    Err(_) => continue,
+                }
+            };
+            let artifact_k = artifact_key(&cloud_k, out_idx as u32, output_path);
+            let mut artifact_meta = ArtifactMeta {
+                recipe_namespace: recipe_namespace.clone(),
+                command_hash: meta.command_hash,
+                env_contribution: meta.env_contribution,
+                seal_contribution: seal_contrib,
+                schema_version: CACHE_VERSION,
+                size_bytes: if ft.is_file() { lstat.len() } else { 0 },
+                tags: std::collections::BTreeSet::new(),
+                consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
+                output_index: out_idx as u32,
+                output_path: output_path.clone(),
+                // CS-0054: stamped by the backend on put.
+                content_hash: ArtifactMeta::zero_content_hash(),
+                kind,
+                mode,
+                target,
+            };
+            if let Err(e) = cache_ctx.backend.put(&artifact_k, &mut *body, &mut artifact_meta) {
+                return Err(format!("output {output_path}: {e}"));
+            }
+        }
+
+        // Upload the depfile as an implicit artifact at index outputs.len() so a
+        // future restore can pull it back.
+        // CS-0085: depfile_idx uses the resolved count to match the index
+        // record_completion appended it at.
+        if let Some(di) = &meta.discovered_inputs {
+            let depfile_idx = resolved_output_paths.len() as u32;
+            let abs_depfile = working_dir.join(&di.from);
+            match std::fs::read(&abs_depfile) {
+                Ok(bytes) => {
+                    let artifact_k = artifact_key(&cloud_k, depfile_idx, &di.from);
+                    let mut artifact_meta = ArtifactMeta {
+                        recipe_namespace: recipe_namespace.clone(),
+                        command_hash: meta.command_hash,
+                        env_contribution: meta.env_contribution,
+                        seal_contribution: seal_contrib,
+                        schema_version: CACHE_VERSION,
+                        size_bytes: bytes.len() as u64,
+                        tags: std::collections::BTreeSet::new(),
+                        consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
+                        output_index: depfile_idx,
+                        output_path: di.from.clone(),
+                        // CS-0054: stamped by the backend on put.
+                        content_hash: ArtifactMeta::zero_content_hash(),
+                        kind: None,
+                        mode: ArtifactMeta::default_mode(),
+                        target: None,
+                    };
+                    if let Err(e) = cook_cache::backend::put_bytes(
+                        cache_ctx.backend.as_ref(),
+                        &artifact_k,
+                        &bytes,
+                        &mut artifact_meta,
+                    ) {
+                        return Err(format!("depfile {}: {e}", di.from));
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "discovered-inputs: depfile '{}' not found after execution: {e}",
+                        di.from
+                    );
+                }
+            }
+
+            // COOK-177: publish the discovered-input PATH LIST under a DECLARED-inputs-only
+            // key so a cold consumer can recover the full key without having a depfile.
+            // SOUND: every listed path's content is folded into the full key, so a stale
+            // manifest can only cause a safe miss, never a wrong hit. This artifact is NOT
+            // recorded in entry.outputs — it is fetched out-of-band on the cold path.
+            let declared_refs: Vec<&str> =
+                judged_inputs.iter().map(|s| s.as_str()).collect();
+            if let Some(declared_hashes) =
+                cook_cache::hash_input_paths(&declared_refs, working_dir)
+            {
+                let declared_key = meta_cloud_key(meta, seal_contrib, &declared_hashes);
+                // Parse the discovered relative paths the SAME way the warm path does.
+                let source_for_skip =
+                    judged_inputs.first().map(String::as_str).unwrap_or("");
+                let discovered_paths: Vec<String> = cook_cache::parse_make_depfile(
+                    &working_dir.join(&di.from),
+                    source_for_skip,
+                    working_dir,
+                )
+                .unwrap_or_default();
+                let json = serde_json::to_vec(&discovered_paths).unwrap_or_default();
+                let manifest_k = artifact_key(
+                    &declared_key,
+                    cook_cache::DISCOVERED_INPUTS_MANIFEST_INDEX,
+                    cook_cache::DISCOVERED_INPUTS_MANIFEST_PATH,
+                );
+                let mut manifest_meta = ArtifactMeta {
                     recipe_namespace: recipe_namespace.clone(),
                     command_hash: meta.command_hash,
                     env_contribution: meta.env_contribution,
                     seal_contribution: seal_contrib,
                     schema_version: CACHE_VERSION,
-                    size_bytes: bytes.len() as u64,
+                    size_bytes: json.len() as u64,
                     tags: std::collections::BTreeSet::new(),
                     consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
-                    output_index: depfile_idx,
-                    output_path: di.from.clone(),
+                    output_index: cook_cache::DISCOVERED_INPUTS_MANIFEST_INDEX,
+                    output_path: cook_cache::DISCOVERED_INPUTS_MANIFEST_PATH
+                        .to_string(),
                     // CS-0054: stamped by the backend on put.
                     content_hash: ArtifactMeta::zero_content_hash(),
-                    kind: None,
-                    mode: ArtifactMeta::default_mode(),
+                    kind: Some(artifact_kind::DISCOVERED_INPUTS.to_string()),
+                    mode: 0o644,
                     target: None,
                 };
                 if let Err(e) = cook_cache::backend::put_bytes(
                     cache_ctx.backend.as_ref(),
-                    &artifact_k,
-                    &bytes,
-                    &mut artifact_meta,
+                    &manifest_k,
+                    &json,
+                    &mut manifest_meta,
                 ) {
-                    tracing::warn!(
-                        "cache backend put failed for depfile {}: {e}",
-                        di.from
-                    );
+                    return Err(format!("discovered-inputs manifest: {e}"));
+                }
+
+                // COOK-278: additionally maintain the multi-set manifest under
+                // its own reserved key. The single-set artifact above is
+                // last-writer-wins, so an edit that changes the discovered SET
+                // erases the older set and breaks revert-restore; this one
+                // accumulates every distinct set seen for the declared key
+                // (newest first, capped). The v1 artifact keeps being written
+                // so pre-COOK-278 binaries sharing the store lose nothing.
+                let mut sets = cook_cache::read_discovered_input_sets(
+                    cache_ctx.backend.as_ref(),
+                    &declared_key,
+                );
+                sets.retain(|s| *s != discovered_paths);
+                sets.insert(0, discovered_paths);
+                sets.truncate(cook_cache::DISCOVERED_INPUT_SETS_CAP);
+                let sets_json = serde_json::to_vec(&sets).unwrap_or_default();
+                let sets_k = artifact_key(
+                    &declared_key,
+                    cook_cache::DISCOVERED_INPUT_SETS_INDEX,
+                    cook_cache::DISCOVERED_INPUT_SETS_PATH,
+                );
+                let mut sets_meta = ArtifactMeta {
+                    recipe_namespace: recipe_namespace.clone(),
+                    command_hash: meta.command_hash,
+                    env_contribution: meta.env_contribution,
+                    seal_contribution: seal_contrib,
+                    schema_version: CACHE_VERSION,
+                    size_bytes: sets_json.len() as u64,
+                    tags: std::collections::BTreeSet::new(),
+                    consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
+                    output_index: cook_cache::DISCOVERED_INPUT_SETS_INDEX,
+                    output_path: cook_cache::DISCOVERED_INPUT_SETS_PATH.to_string(),
+                    // CS-0054: stamped by the backend on put.
+                    content_hash: ArtifactMeta::zero_content_hash(),
+                    kind: Some(artifact_kind::DISCOVERED_INPUT_SETS.to_string()),
+                    mode: 0o644,
+                    target: None,
+                };
+                if let Err(e) = cook_cache::backend::put_bytes(
+                    cache_ctx.backend.as_ref(),
+                    &sets_k,
+                    &sets_json,
+                    &mut sets_meta,
+                ) {
+                    return Err(format!("discovered-input sets manifest: {e}"));
                 }
             }
-            Err(e) => {
-                tracing::warn!(
-                    "discovered-inputs: depfile '{}' not found after execution: {e}",
-                    di.from
+        }
+
+        // CS-0204: the module path list, under the DECLARED-inputs-only key, so a
+        // cold consumer on another machine can reconstruct the full key this unit
+        // just published under. Same two-level shape and same soundness argument
+        // as COOK-177/278 above: every listed path's CONTENT is folded into the
+        // key it composes, so a manifest that no longer describes the reader's
+        // tree can only cause a safe MISS.
+        //
+        // Written only when the unit loaded something, so a store full of shell
+        // units gains no artifacts and a cold fetch for one consults nothing.
+        if !entry.module_inputs.is_empty() {
+            let declared_refs: Vec<&str> = judged_inputs.iter().map(|s| s.as_str()).collect();
+            if let Some(declared_hashes) =
+                cook_cache::hash_input_paths(&declared_refs, working_dir)
+            {
+                let declared_key = meta_cloud_key(meta, seal_contrib, &declared_hashes);
+                let observed: Vec<String> = entry
+                    .module_inputs
+                    .iter()
+                    .map(|r| r.path.to_string())
+                    .collect();
+                let existing =
+                    cook_cache::read_module_input_sets(cache_ctx.backend.as_ref(), &declared_key);
+                // Merge and wire form are both the shared law, so the probe store
+                // and this one cannot drift on what "newest first, deduplicated,
+                // capped" means or on how it is written down.
+                let sets = cook_cache::merge_path_set(&existing, &observed);
+                let sets_json = cook_cache::encode_path_sets(&sets);
+                let sets_k = artifact_key(
+                    &declared_key,
+                    cook_cache::MODULE_INPUT_SETS_INDEX,
+                    cook_cache::MODULE_INPUT_SETS_PATH,
                 );
+                let mut sets_meta = ArtifactMeta {
+                    recipe_namespace: recipe_namespace.clone(),
+                    command_hash: meta.command_hash,
+                    env_contribution: meta.env_contribution,
+                    seal_contribution: seal_contrib,
+                    schema_version: CACHE_VERSION,
+                    size_bytes: sets_json.len() as u64,
+                    tags: std::collections::BTreeSet::new(),
+                    consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
+                    output_index: cook_cache::MODULE_INPUT_SETS_INDEX,
+                    output_path: cook_cache::MODULE_INPUT_SETS_PATH.to_string(),
+                    // CS-0054: stamped by the backend on put.
+                    content_hash: ArtifactMeta::zero_content_hash(),
+                    kind: Some(artifact_kind::MODULE_INPUT_SETS.to_string()),
+                    mode: 0o644,
+                    target: None,
+                };
+                if let Err(e) = cook_cache::backend::put_bytes(
+                    cache_ctx.backend.as_ref(),
+                    &sets_k,
+                    &sets_json,
+                    &mut sets_meta,
+                ) {
+                    return Err(format!("module-inputs manifest: {e}"));
+                }
             }
         }
 
-        // COOK-177: publish the discovered-input PATH LIST under a DECLARED-inputs-only
-        // key so a cold consumer can recover the full key without having a depfile.
-        // SOUND: every listed path's content is folded into the full key, so a stale
-        // manifest can only cause a safe miss, never a wrong hit. This artifact is NOT
-        // recorded in entry.outputs — it is fetched out-of-band on the cold path.
-        let declared_refs: Vec<&str> =
-            judged_inputs.iter().map(|s| s.as_str()).collect();
-        if let Some(declared_hashes) =
-            cook_cache::hash_input_paths(&declared_refs, working_dir)
-        {
-            let declared_key = meta_cloud_key(meta, seal_contrib, &declared_hashes);
-            // Parse the discovered relative paths the SAME way the warm path does.
-            let source_for_skip =
-                judged_inputs.first().map(String::as_str).unwrap_or("");
-            let discovered_paths: Vec<String> = cook_cache::parse_make_depfile(
-                &working_dir.join(&di.from),
-                source_for_skip,
-                working_dir,
-            )
-            .unwrap_or_default();
-            let json = serde_json::to_vec(&discovered_paths).unwrap_or_default();
-            let manifest_k = artifact_key(
-                &declared_key,
-                cook_cache::DISCOVERED_INPUTS_MANIFEST_INDEX,
-                cook_cache::DISCOVERED_INPUTS_MANIFEST_PATH,
-            );
-            let mut manifest_meta = ArtifactMeta {
+        // The empty directories `dir/` outputs declared were appended to
+        // `entry.outputs` after the file outputs and the implicit depfile output, so
+        // their artifacts sit at the trailing indices.
+        let first_idx = entry.outputs.len() - empty_dir_paths.len();
+        for (i, ed) in empty_dir_paths.iter().enumerate() {
+            let next_idx = (first_idx + i) as u32;
+            let abs_ed = working_dir.join(ed);
+            #[cfg(unix)]
+            let mode = std::fs::symlink_metadata(&abs_ed)
+                .ok()
+                .map(|m| std::os::unix::fs::PermissionsExt::mode(&m.permissions()))
+                .unwrap_or(0o755);
+            #[cfg(not(unix))]
+            let mode = 0o755u32;
+            let artifact_k = artifact_key(&cloud_k, next_idx, ed);
+            let mut artifact_meta = ArtifactMeta {
                 recipe_namespace: recipe_namespace.clone(),
                 command_hash: meta.command_hash,
                 env_contribution: meta.env_contribution,
                 seal_contribution: seal_contrib,
                 schema_version: CACHE_VERSION,
-                size_bytes: json.len() as u64,
+                size_bytes: 0,
                 tags: std::collections::BTreeSet::new(),
                 consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
-                output_index: cook_cache::DISCOVERED_INPUTS_MANIFEST_INDEX,
-                output_path: cook_cache::DISCOVERED_INPUTS_MANIFEST_PATH
-                    .to_string(),
+                output_index: next_idx,
+                output_path: ed.clone(),
                 // CS-0054: stamped by the backend on put.
                 content_hash: ArtifactMeta::zero_content_hash(),
-                kind: Some(artifact_kind::DISCOVERED_INPUTS.to_string()),
-                mode: 0o644,
+                kind: Some(artifact_kind::DIR.to_string()),
+                mode,
                 target: None,
             };
             if let Err(e) = cook_cache::backend::put_bytes(
                 cache_ctx.backend.as_ref(),
-                &manifest_k,
-                &json,
-                &mut manifest_meta,
+                &artifact_k,
+                b"",
+                &mut artifact_meta,
             ) {
-                tracing::warn!(
-                    "cache backend put failed for discovered-inputs manifest: {}",
-                    e
-                );
-            }
-
-            // COOK-278: additionally maintain the multi-set manifest under
-            // its own reserved key. The single-set artifact above is
-            // last-writer-wins, so an edit that changes the discovered SET
-            // erases the older set and breaks revert-restore; this one
-            // accumulates every distinct set seen for the declared key
-            // (newest first, capped). The v1 artifact keeps being written
-            // so pre-COOK-278 binaries sharing the store lose nothing.
-            let mut sets = cook_cache::read_discovered_input_sets(
-                cache_ctx.backend.as_ref(),
-                &declared_key,
-            );
-            sets.retain(|s| *s != discovered_paths);
-            sets.insert(0, discovered_paths);
-            sets.truncate(cook_cache::DISCOVERED_INPUT_SETS_CAP);
-            let sets_json = serde_json::to_vec(&sets).unwrap_or_default();
-            let sets_k = artifact_key(
-                &declared_key,
-                cook_cache::DISCOVERED_INPUT_SETS_INDEX,
-                cook_cache::DISCOVERED_INPUT_SETS_PATH,
-            );
-            let mut sets_meta = ArtifactMeta {
-                recipe_namespace: recipe_namespace.clone(),
-                command_hash: meta.command_hash,
-                env_contribution: meta.env_contribution,
-                seal_contribution: seal_contrib,
-                schema_version: CACHE_VERSION,
-                size_bytes: sets_json.len() as u64,
-                tags: std::collections::BTreeSet::new(),
-                consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
-                output_index: cook_cache::DISCOVERED_INPUT_SETS_INDEX,
-                output_path: cook_cache::DISCOVERED_INPUT_SETS_PATH.to_string(),
-                // CS-0054: stamped by the backend on put.
-                content_hash: ArtifactMeta::zero_content_hash(),
-                kind: Some(artifact_kind::DISCOVERED_INPUT_SETS.to_string()),
-                mode: 0o644,
-                target: None,
-            };
-            if let Err(e) = cook_cache::backend::put_bytes(
-                cache_ctx.backend.as_ref(),
-                &sets_k,
-                &sets_json,
-                &mut sets_meta,
-            ) {
-                tracing::warn!(
-                    "cache backend put failed for discovered-input sets manifest: {}",
-                    e
-                );
+                return Err(format!("empty dir {ed}: {e}"));
             }
         }
-    }
 
-    // CS-0204: the module path list, under the DECLARED-inputs-only key, so a
-    // cold consumer on another machine can reconstruct the full key this unit
-    // just published under. Same two-level shape and same soundness argument
-    // as COOK-177/278 above: every listed path's CONTENT is folded into the
-    // key it composes, so a manifest that no longer describes the reader's
-    // tree can only cause a safe MISS.
-    //
-    // Written only when the unit loaded something, so a store full of shell
-    // units gains no artifacts and a cold fetch for one consults nothing.
-    if !entry.module_inputs.is_empty() {
-        let declared_refs: Vec<&str> = judged_inputs.iter().map(|s| s.as_str()).collect();
-        if let Some(declared_hashes) =
-            cook_cache::hash_input_paths(&declared_refs, working_dir)
-        {
-            let declared_key = meta_cloud_key(meta, seal_contrib, &declared_hashes);
-            let observed: Vec<String> = entry
-                .module_inputs
-                .iter()
-                .map(|r| r.path.to_string())
-                .collect();
-            let existing =
-                cook_cache::read_module_input_sets(cache_ctx.backend.as_ref(), &declared_key);
-            // Merge and wire form are both the shared law, so the probe store
-            // and this one cannot drift on what "newest first, deduplicated,
-            // capped" means or on how it is written down.
-            let sets = cook_cache::merge_path_set(&existing, &observed);
-            let sets_json = cook_cache::encode_path_sets(&sets);
-            let sets_k = artifact_key(
-                &declared_key,
-                cook_cache::MODULE_INPUT_SETS_INDEX,
-                cook_cache::MODULE_INPUT_SETS_PATH,
-            );
-            let mut sets_meta = ArtifactMeta {
-                recipe_namespace: recipe_namespace.clone(),
-                command_hash: meta.command_hash,
-                env_contribution: meta.env_contribution,
-                seal_contribution: seal_contrib,
-                schema_version: CACHE_VERSION,
-                size_bytes: sets_json.len() as u64,
-                tags: std::collections::BTreeSet::new(),
-                consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
-                output_index: cook_cache::MODULE_INPUT_SETS_INDEX,
-                output_path: cook_cache::MODULE_INPUT_SETS_PATH.to_string(),
-                // CS-0054: stamped by the backend on put.
-                content_hash: ArtifactMeta::zero_content_hash(),
-                kind: Some(artifact_kind::MODULE_INPUT_SETS.to_string()),
-                mode: 0o644,
-                target: None,
-            };
-            if let Err(e) = cook_cache::backend::put_bytes(
-                cache_ctx.backend.as_ref(),
-                &sets_k,
-                &sets_json,
-                &mut sets_meta,
-            ) {
-                tracing::warn!("cache backend put failed for module-inputs manifest: {e}");
-            }
-        }
-    }
-
-    // The empty directories `dir/` outputs declared were appended to
-    // `entry.outputs` after the file outputs and the implicit depfile output, so
-    // their artifacts sit at the trailing indices.
-    let first_idx = entry.outputs.len() - empty_dir_paths.len();
-    for (i, ed) in empty_dir_paths.iter().enumerate() {
-        let next_idx = (first_idx + i) as u32;
-        let abs_ed = working_dir.join(ed);
-        #[cfg(unix)]
-        let mode = std::fs::symlink_metadata(&abs_ed)
-            .ok()
-            .map(|m| std::os::unix::fs::PermissionsExt::mode(&m.permissions()))
-            .unwrap_or(0o755);
-        #[cfg(not(unix))]
-        let mode = 0o755u32;
-        let artifact_k = artifact_key(&cloud_k, next_idx, ed);
-        let mut artifact_meta = ArtifactMeta {
+        // Last of the artifacts: the backfill uses this one as its presence key, so it
+        // must imply the rest of the upload landed.
+        let observation_k = artifact_key(
+            &cloud_k,
+            cook_cache::OBSERVATION_INDEX,
+            cook_cache::OBSERVATION_PATH,
+        );
+        let mut observation_meta = ArtifactMeta {
             recipe_namespace: recipe_namespace.clone(),
             command_hash: meta.command_hash,
             env_contribution: meta.env_contribution,
             seal_contribution: seal_contrib,
             schema_version: CACHE_VERSION,
-            size_bytes: 0,
+            size_bytes: observation_bytes.len() as u64,
             tags: std::collections::BTreeSet::new(),
             consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
-            output_index: next_idx,
-            output_path: ed.clone(),
-            // CS-0054: stamped by the backend on put.
+            output_index: cook_cache::OBSERVATION_INDEX,
+            output_path: cook_cache::OBSERVATION_PATH.to_string(),
             content_hash: ArtifactMeta::zero_content_hash(),
-            kind: Some(artifact_kind::DIR.to_string()),
-            mode,
+            kind: Some(artifact_kind::OBSERVATION.to_string()),
+            mode: ArtifactMeta::default_mode(),
             target: None,
         };
         if let Err(e) = cook_cache::backend::put_bytes(
             cache_ctx.backend.as_ref(),
-            &artifact_k,
-            b"",
-            &mut artifact_meta,
+            &observation_k,
+            &observation_bytes,
+            &mut observation_meta,
         ) {
-            tracing::warn!("cache backend put failed for empty dir {}: {}", ed, e);
+            // A refused stream must not be paired with this run's scalars: keep both from one run.
+            return Err(format!("observation: {e}"));
         }
-    }
 
-    // Last of the artifacts: the backfill uses this one as its presence key, so it
-    // must imply the rest of the upload landed.
-    let observation_k = artifact_key(
-        &cloud_k,
-        cook_cache::OBSERVATION_INDEX,
-        cook_cache::OBSERVATION_PATH,
-    );
-    let mut observation_meta = ArtifactMeta {
-        recipe_namespace: recipe_namespace.clone(),
-        command_hash: meta.command_hash,
-        env_contribution: meta.env_contribution,
-        seal_contribution: seal_contrib,
-        schema_version: CACHE_VERSION,
-        size_bytes: observation_bytes.len() as u64,
-        tags: std::collections::BTreeSet::new(),
-        consulted_env_keys: meta.consulted_env.keys().cloned().collect(),
-        output_index: cook_cache::OBSERVATION_INDEX,
-        output_path: cook_cache::OBSERVATION_PATH.to_string(),
-        content_hash: ArtifactMeta::zero_content_hash(),
-        kind: Some(artifact_kind::OBSERVATION.to_string()),
-        mode: ArtifactMeta::default_mode(),
-        target: None,
-    };
-    if let Err(e) = cook_cache::backend::put_bytes(
-        cache_ctx.backend.as_ref(),
-        &observation_k,
-        &observation_bytes,
-        &mut observation_meta,
-    ) {
-        // A refused stream must not be paired with this run's scalars: keep both from one run.
-        tracing::warn!("cache backend put failed for observation: {e}");
-        return;
-    }
-
-    // COOK-166: persist the producer determinant manifest alongside the shared
-    // artifacts, keyed by the unit's cloud_key K. `local` units skip this
-    // (the early return above).
-    let mut manifest = build_determinant_manifest(
-        CACHE_VERSION,
-        &recipe_namespace,
-        &cloud_k,
-        meta.command_hash,
-        meta.env_contribution,
-        seal_contrib,
-        &entry.inputs,
-        resolved_output_paths,
-        empty_dir_paths,
-        &meta.consulted_env,
-        &meta.seal_keys,
-        probe_store,
-    );
-    manifest.observation = entry.observed.clone();
-    if let Err(e) = cache_ctx.backend.as_ref().put_manifest(&cloud_k, &manifest) {
-        tracing::warn!("cache manifest put failed for {recipe_namespace}: {e}");
+        // COOK-166: persist the producer determinant manifest alongside the shared
+        // artifacts, keyed by the unit's cloud_key K. `local` units skip this
+        // (the early return above).
+        let mut manifest = build_determinant_manifest(
+            CACHE_VERSION,
+            &recipe_namespace,
+            &cloud_k,
+            meta.command_hash,
+            meta.env_contribution,
+            seal_contrib,
+            &entry.inputs,
+            resolved_output_paths,
+            empty_dir_paths,
+            &meta.consulted_env,
+            &meta.seal_keys,
+            probe_store,
+        );
+        manifest.observation = entry.observed.clone();
+        if let Err(e) = cache_ctx.backend.as_ref().put_manifest(&cloud_k, &manifest) {
+            return Err(format!("determinant manifest: {e}"));
+        }
+        Ok(())
+    })();
+    if let Err(e) = outcome {
+        if published.failed.fetch_add(1, Ordering::Relaxed) == 0 {
+            tracing::warn!("cache upload for {} failed: {e}; not published", unit.display_name());
+        }
     }
 }
 /// COOK-166: build the producer determinant manifest from the resolved values

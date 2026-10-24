@@ -1084,8 +1084,8 @@ fn install_worker_dep_output_api(
         let fqn = recipe.lock().expect("recipe name lock").clone();
         match resolve_worker_dep_output(&deps, &fqn, &name) {
             Some(paths) if paths.is_empty() => {
-                eprintln!(
-                    "cook: warning: [{fqn}] cook.dep_output(\"{name}\"): referent has an empty output list"
+                tracing::warn!(
+                    "[{fqn}] cook.dep_output(\"{name}\"): referent has an empty output list"
                 );
                 Ok(String::new())
             }
@@ -1104,8 +1104,8 @@ fn install_worker_dep_output_api(
         match resolve_worker_dep_output(&deps2, &fqn, &name) {
             Some(paths) => {
                 if paths.is_empty() {
-                    eprintln!(
-                        "cook: warning: [{fqn}] cook.dep_output_list(\"{name}\"): referent has an empty output list"
+                    tracing::warn!(
+                        "[{fqn}] cook.dep_output_list(\"{name}\"): referent has an empty output list"
                     );
                 }
                 let t = lua.create_table()?;

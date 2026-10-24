@@ -425,6 +425,7 @@ dependencies = [
  "signal-hook",
  "tempfile",
  "toml 0.8.23",
+ "tracing",
  "walkdir",
 ]
 
@@ -499,6 +500,7 @@ dependencies = [
  "mlua",
  "serde_json",
  "tempfile",
+ "tracing",
 ]
 
 [[package]]

@@ -37,8 +37,11 @@ impl<W: Write + Send> JsonWriter<W> {
             event,
         };
         let value = serde_json::to_value(&line).map_err(io::Error::other)?;
-        serde_json::to_writer(&mut self.out, &value).map_err(io::Error::other)?;
-        self.out.write_all(b"\n")
+        // One write per record: stderr is unbuffered, and a warning from another
+        // thread must land between records, never inside one.
+        let mut record = serde_json::to_vec(&value).map_err(io::Error::other)?;
+        record.push(b'\n');
+        self.out.write_all(&record)
     }
 }
 

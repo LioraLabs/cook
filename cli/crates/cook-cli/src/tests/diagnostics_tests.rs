@@ -56,3 +56,38 @@ fn extracts_parse_error_line_location() {
 fn locationless_messages_return_none() {
     assert_eq!(extract_location("recipe not found: zzz"), (None, None));
 }
+
+/// Runs `emit` under the real subscriber writing to a buffer; returns what it wrote.
+fn rendered(emit: impl FnOnce()) -> String {
+    use std::sync::{Arc, Mutex};
+    #[derive(Clone)]
+    struct Shared(Arc<Mutex<Vec<u8>>>);
+    impl std::io::Write for Shared {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+    }
+    let out = Shared(Arc::new(Mutex::new(vec![])));
+    tracing::subscriber::with_default(StderrWarnings(Mutex::new(out.clone())), emit);
+    let text = String::from_utf8(out.0.lock().unwrap().clone()).unwrap();
+    text
+}
+
+#[test]
+fn warn_and_error_render_as_cook_lines_with_extra_fields_kept() {
+    let lines = rendered(|| {
+        tracing::warn!("store down: {}", 7);
+        tracing::error!(unit = "app", "boom");
+        tracing::info!("not shown");
+        tracing::warn!(target: "h2::codec", "third party");
+        tracing::warn!(target: "cookie::jar", "lookalike");
+    });
+    assert_eq!(lines, "cook: warning: store down: 7\ncook: error: boom unit=\"app\"\n");
+}
+
+#[test]
+fn an_event_with_fields_and_no_message_has_no_double_space() {
+    assert_eq!(rendered(|| tracing::warn!(unit = "app", n = 2)), "cook: warning: unit=\"app\" n=2\n");
+}
