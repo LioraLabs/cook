@@ -60,6 +60,9 @@ pub struct RegisterSessionBuilder {
     /// we don't repeat the diagnostic on every recipe-register call within
     /// a single Cookfile load.
     shadow_warnings_emitted: Rc<RefCell<std::collections::BTreeSet<(String, String)>>>,
+    /// (qualified recipe, pattern) root-wildcard output declarations already
+    /// warned about: fan-out lowers one declaration into many units.
+    root_wildcard_warned: Rc<RefCell<std::collections::BTreeSet<(String, String)>>>,
     /// The targeted recipe / chore name (unqualified within this Cookfile).
     /// When set, the body invocation for this recipe will receive `argv` as
     /// bound chore-parameter values (COOK-36 Task 4).
@@ -107,6 +110,7 @@ impl RegisterSessionBuilder {
             cookfile_label: None,
             env_keyset: VarKeyset::new(),
             shadow_warnings_emitted: Rc::new(RefCell::new(std::collections::BTreeSet::new())),
+            root_wildcard_warned: Rc::new(RefCell::new(std::collections::BTreeSet::new())),
             target_recipe: None,
             target_argv: Vec::new(),
             reachable_names: std::collections::BTreeSet::new(),
@@ -1437,7 +1441,32 @@ impl BodyDriver {
         // prevents cross-Cookfile collisions of the index file. Downstream
         // engine cache keying depends on cache_meta.recipe_name being the
         // actual recipe name, not "".
-        for unit in &mut body.units {
+        for (unit_idx, unit) in body.units.iter_mut().enumerate() {
+            for (idx, pattern) in unit.output_paths.iter().enumerate() {
+                // One declaration = one warning. A fan-out step lowers into one
+                // unit per member from ONE add_unit call site, and a templated
+                // pattern expands differently per member, so the expanded string
+                // can't be the key: (group, call site, output index) is.
+                // shortcut: a hand-written Lua loop over distinct literal
+                // patterns inside one step group shares every frame and warns
+                // once; fix by having codegen mark fan-out units.
+                let declaration = match (&unit.dep_kind, body.unit_sites.get(&unit_idx)) {
+                    (cook_contracts::DepKind::StepGroup(group), Some(site)) => {
+                        format!("#{group}@{site}:{idx}")
+                    }
+                    _ => pattern.clone(),
+                };
+                if cook_contracts::pathlaw::is_root_wildcard_output(pattern)
+                    && builder
+                        .root_wildcard_warned
+                        .borrow_mut()
+                        .insert((qualified_name.clone(), declaration))
+                {
+                    builder.gather_warnings.borrow_mut().push(format!(
+                        "output {pattern:?} (recipe {qualified_name}) is a wildcard at the project root: it can match files there such as the Cookfile, dotfiles (.env, .envrc), CI and hook files, which a shared-cache restore may then write; narrow it to a directory, e.g. \"dist/**\""
+                    ));
+                }
+            }
             if let Some(meta) = unit.cache_meta.as_mut() {
                 meta.recipe_name = name.to_string();
                 if let (true, Some(path)) = (file_member_source, unit.member.clone()) {

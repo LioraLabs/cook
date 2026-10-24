@@ -504,6 +504,8 @@ A unit whose declared `outputs[]` (§{lua.add-unit-output-globs}) contains one o
 
 On a subsequent cache check for the same unit, the implementation MUST use the recorded `StepEntry.outputs` directly for the disk-integrity walk and for `try_restore` (§{exec.cache.integrity}). The implementation MUST NOT re-resolve the patterns against the current filesystem during the check. The recorded file set is the source of truth for "what the unit produced last time it ran"; cache invalidation flows through the unit's input fingerprint, not through pattern re-resolution.
 
+**Root wildcards (CS-0271).** An output glob or directory output whose first path component is itself a pattern (a *root wildcard*, for example `**`, `*`, `*.env`, `.*`) can name files directly in the unit's working directory: the Cookfile, dotfiles such as `.env` and `.envrc`, CI and hook files. A restore from a shared cache may therefore write them. A conforming implementation MUST emit a warning at registration for each such declaration, once per declaration per invocation, naming the recipe and the pattern, and MUST NOT otherwise change how the pattern matches or restores. A pattern whose first component is a literal directory name (`dist/**`) is not a root wildcard.
+
 ### Note 17.6.1
 
 The resolved file set persisted in `StepEntry.outputs` is indistinguishable from the set that would have been persisted by a unit whose `outputs[]` were literal from the start. Future cache reads, cross-machine restores, and artifact lookups operate on the literal paths only; the original glob pattern is not recorded.

@@ -22,6 +22,13 @@ pub fn has_glob_meta(s: &str) -> bool {
     s.bytes().any(|b| matches!(b, b'*' | b'?' | b'['))
 }
 
+/// True when the first component of an output declaration is itself a pattern
+/// (`**`, `*`, `*.env`, `.*`), so it can name files directly in the unit's
+/// working directory (CS-0271). A leading `./` is ignored.
+pub fn is_root_wildcard_output(s: &str) -> bool {
+    strip_dot_slash(s).split('/').next().is_some_and(has_glob_meta)
+}
+
 /// A directory output (CS-0119): a trailing slash declares that Cook owns the
 /// entire subtree rooted here. Its concrete file set is known only after the
 /// command runs, so it is a terminal output like a glob.

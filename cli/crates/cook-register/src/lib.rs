@@ -385,6 +385,10 @@ pub struct BodyCaptureState {
     /// its own member's upstream paths (unlike step_group_dep_input_paths, which is
     /// step-group-wide). Cleared on drain, not at step-group close.
     pub pending_member_dep_input_paths: Vec<String>,
+    /// Lua call stack (`source:line` per frame, innermost first, joined by `<`)
+    /// of each step-group `cook.add_unit`, by unit index. Every iteration of a
+    /// generated fan-out loop shares one site; distinct calls differ at some frame. Names a declaration for the root-wildcard warning.
+    pub unit_sites: std::collections::HashMap<usize, String>,
     /// True while the register-phase body of a chore is executing.
     /// `cook.add_unit` raises a Lua error if `cache = true` is passed
     /// while this flag is set (§{chores.no-caching}).
@@ -441,6 +445,7 @@ impl BodyCaptureState {
             step_group_dep_refs: Vec::new(),
             step_group_dep_input_paths: Vec::new(),
             pending_member_dep_input_paths: Vec::new(),
+            unit_sites: std::collections::HashMap::new(),
             current_chore_active: false,
             current_recipe: None,
             current_recipe_bare: None,

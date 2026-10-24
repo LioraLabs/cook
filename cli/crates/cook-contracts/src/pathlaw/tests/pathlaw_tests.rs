@@ -1,4 +1,7 @@
-use super::{covers_root, covers_too_broad, escapes_base, has_glob_meta, is_dir_output, normalize};
+use super::{
+    covers_root, covers_too_broad, escapes_base, has_glob_meta, is_dir_output,
+    is_root_wildcard_output, normalize,
+};
 use std::path::{Path, PathBuf};
 
 #[test]
@@ -146,5 +149,15 @@ fn audit_refuses_a_relative_root_climbing_back_to_its_own_directory() {
     }
     for e in ["../proj/src", "../other/**", "../../x"] {
         assert!(!covers_too_broad(e, at), "{e}");
+    }
+}
+
+#[test]
+fn root_wildcard_outputs() {
+    for e in ["**", "*", "*.env", ".*", "?x", "[ab]c", "./*", "**/x"] {
+        assert!(is_root_wildcard_output(e), "{e}");
+    }
+    for e in ["dist/**", "out/*.o", "./dist/*", "a.txt", "dist/", "../x/*", "", "/abs/*"] {
+        assert!(!is_root_wildcard_output(e), "{e}");
     }
 }

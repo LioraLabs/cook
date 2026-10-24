@@ -1204,6 +1204,20 @@ pub fn register_unit_api(
             DepKind::Sequential
         };
         let unit_idx = body.units.len();
+        // Only step-group units read the site; HashMap keeps just those (no
+        // None padding for the common sequential case).
+        if matches!(dep_kind, DepKind::StepGroup(_)) {
+            // The whole call stack, so a shared helper or pcall frame still
+            // differs at a higher frame between distinct declarations.
+            let site = (1..)
+                .map_while(|level| lua.inspect_stack(level))
+                .map(|d| {
+                    format!("{}:{}", d.source().short_src.unwrap_or_default(), d.curr_line())
+                })
+                .collect::<Vec<_>>()
+                .join("<");
+            body.unit_sites.insert(unit_idx, site);
+        }
         body.units.push(CapturedUnit {
             payload,
             cache_meta,
