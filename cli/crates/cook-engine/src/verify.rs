@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 
 use crate::RegisteredWorkspace;
 use cook_contracts::WorkPayload;
+use cook_contracts::pathlaw::rebase;
 use cook_probe::store::ProbeValueStore;
 
 /// Per-unit verdict from the re-run-and-compare pass.
@@ -95,16 +96,6 @@ pub(crate) fn resolves_outside(root: &Path, wd: &Path, output: &str) -> Option<P
                 }
             }
         }
-    }
-}
-
-/// Rebase `p` from under `from` to under `to` by string prefix (not
-/// `Path::strip_prefix`, which would drop the `./` segments recorded output
-/// names keep). `None` when `p` is not `from` or inside it.
-fn rebase(p: &str, from: &str, to: &str) -> Option<String> {
-    match p.strip_prefix(from) {
-        Some(rest) if rest.is_empty() || rest.starts_with('/') => Some(format!("{to}{rest}")),
-        _ => None,
     }
 }
 
@@ -276,15 +267,13 @@ pub fn rerun_in_sandbox(
     // sandbox instead, and name what it finds as the real run recorded it.
     let mut declared = Vec::with_capacity(declared_outputs.len());
     for p in declared_outputs {
-        let p = rebase(p, real, &sand).unwrap_or_else(|| p.clone());
-        // Lexical, so `<wd>/../x` does not pass the prefix check.
-        let abs = sandbox_path.join(&p);
-        if !cook_contracts::pathlaw::normalize(&abs).starts_with(sandbox_path) {
+        // Lexical, so `<wd>/../x` is outside (CS-0274's one rule).
+        if cook_contracts::pathlaw::output_leaves_unit(p, real) {
             return Err(format!(
                 "output `{p}` is outside the unit's working directory; the re-run cannot reproduce it"
             ));
         }
-        declared.push(p);
+        declared.push(rebase(p, real, &sand).unwrap_or_else(|| p.clone()));
     }
     if let Some(overlay) = isolated.as_ref().filter(|_| in_place) {
         // The check above is lexical; the kernel follows a symlinked parent.

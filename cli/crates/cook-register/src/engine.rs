@@ -1441,8 +1441,27 @@ impl BodyDriver {
         // prevents cross-Cookfile collisions of the index file. Downstream
         // engine cache keying depends on cache_meta.recipe_name being the
         // actual recipe name, not "".
+        let wd = builder.working_dir.to_string_lossy();
         for (unit_idx, unit) in body.units.iter_mut().enumerate() {
             for (idx, pattern) in unit.output_paths.iter().enumerate() {
+                if cook_contracts::pathlaw::is_dir_output(pattern) {
+                    use cook_contracts::pathlaw::{dir_output_refusal, DirOutputRefusal};
+                    match dir_output_refusal(pattern, &wd) {
+                        Some(DirOutputRefusal::Pattern) => {
+                            return Err(RegisterError::DirOutputIsPattern {
+                                recipe: qualified_name.clone(),
+                                output: pattern.clone(),
+                            });
+                        }
+                        Some(DirOutputRefusal::LeavesUnit) => {
+                            return Err(RegisterError::DirOutputOwnsRoot {
+                                recipe: qualified_name.clone(),
+                                output: pattern.clone(),
+                            });
+                        }
+                        None => {}
+                    }
+                }
                 // One declaration = one warning. A fan-out step lowers into one
                 // unit per member from ONE add_unit call site, and a templated
                 // pattern expands differently per member, so the expanded string

@@ -332,3 +332,120 @@ fn remove_stale_outputs_never_goes_through_a_link() {
     assert!(!wd.join("dist/old.js").exists());
     assert!(std::fs::symlink_metadata(wd.join("dist/assets")).is_err());
 }
+
+/// Defence in depth for CS-0274: even with registration bypassed, a root that
+/// is the working dir itself, an ancestor, or outside it sweeps nothing. Every
+/// root here stays inside the temp dir, so a missing guard cannot reach the host.
+#[test]
+fn reconcile_dir_output_refuses_a_root_it_would_own() {
+    let tmp = tempfile::tempdir().unwrap();
+    let wd = tmp.path().join("a/proj");
+    std::fs::create_dir_all(wd.join("x")).unwrap();
+    std::fs::write(tmp.path().join("a/sibling.txt"), b"s").unwrap();
+    std::fs::write(wd.join("Cookfile"), b"c").unwrap();
+    std::fs::write(wd.join("x/f"), b"f").unwrap();
+    for root in ["", ".", "./", "x/..", "x/../", "..", "../", "../proj"] {
+        reconcile_dir_output(&wd, root, &BTreeSet::new());
+        assert!(wd.join("Cookfile").is_file(), "{root:?} swept the working dir");
+        assert!(wd.join("x/f").is_file(), "{root:?} swept the working dir");
+        assert!(tmp.path().join("a/sibling.txt").is_file(), "{root:?} swept outside");
+    }
+}
+
+/// A root reached through a link (`dist -> .`, `up -> ..`) sweeps nothing: the
+/// walk would follow it to the project or its parent.
+#[cfg(unix)]
+#[test]
+fn reconcile_dir_output_never_sweeps_through_a_link() {
+    let tmp = tempfile::tempdir().unwrap();
+    let wd = tmp.path().join("a/proj");
+    std::fs::create_dir_all(wd.join("x")).unwrap();
+    std::fs::write(tmp.path().join("a/sibling.txt"), b"s").unwrap();
+    std::fs::write(wd.join("Cookfile"), b"c").unwrap();
+    std::fs::write(wd.join("x/f"), b"f").unwrap();
+    std::os::unix::fs::symlink(".", wd.join("dist")).unwrap();
+    std::os::unix::fs::symlink("..", wd.join("up")).unwrap();
+    for root in ["dist", "up", "dist/x"] {
+        reconcile_dir_output(&wd, root, &BTreeSet::new());
+        assert!(wd.join("Cookfile").is_file(), "{root:?} swept the working dir");
+        assert!(wd.join("x/f").is_file(), "{root:?} swept the working dir");
+        assert!(tmp.path().join("a/sibling.txt").is_file(), "{root:?} swept outside");
+        assert!(wd.join("dist").is_symlink() && wd.join("up").is_symlink(), "{root:?} removed a link");
+    }
+}
+
+/// CS-0274: a pattern root (`**`, `*`, `x/*`) sweeps nothing, even with
+/// registration bypassed — globbing `**/**/*` would reach the user's files.
+#[test]
+fn reconcile_dir_output_refuses_a_pattern_root() {
+    let tmp = tempfile::tempdir().unwrap();
+    let wd = tmp.path().join("a/proj");
+    std::fs::create_dir_all(wd.join("x/y")).unwrap();
+    std::fs::write(wd.join("Cookfile"), b"c").unwrap();
+    std::fs::write(wd.join("x/y/f"), b"f").unwrap();
+    for root in ["**", "**/", "*", "*/", "x/*", "x/*/", "x/?", "[x]"] {
+        reconcile_dir_output(&wd, root, &BTreeSet::new());
+        assert!(wd.join("Cookfile").is_file(), "{root:?} swept the working dir");
+        assert!(wd.join("x/y/f").is_file(), "{root:?} swept the working dir");
+    }
+}
+
+/// An absolute root under the working dir (`<wd>/./dist`, cook_pnpm's form) is
+/// the subdirectory it names; `<wd>` itself, written absolute, sweeps nothing.
+#[test]
+fn reconcile_dir_output_reads_an_absolute_root_under_the_working_dir() {
+    let tmp = tempfile::tempdir().unwrap();
+    let wd = tmp.path().join("a/proj");
+    std::fs::create_dir_all(wd.join("dist")).unwrap();
+    std::fs::write(wd.join("Cookfile"), b"c").unwrap();
+    std::fs::write(wd.join("dist/stray"), b"s").unwrap();
+    let abs = wd.to_str().unwrap();
+    for root in [abs.to_string(), format!("{abs}/"), format!("{abs}/./"), format!("{abs}/dist/..")] {
+        reconcile_dir_output(&wd, &root, &BTreeSet::new());
+        assert!(wd.join("Cookfile").is_file(), "{root:?} swept the working dir");
+        assert!(wd.join("dist/stray").is_file(), "{root:?} swept the working dir");
+    }
+    reconcile_dir_output(&wd, &format!("{abs}/./dist/"), &BTreeSet::new());
+    assert!(!wd.join("dist/stray").exists(), "the absolute subdirectory was not swept");
+    assert!(wd.join("Cookfile").is_file());
+}
+
+/// An absolute root under a working dir named with a glob character is a
+/// pattern as written: nothing is swept, neither the sibling it would match
+/// nor the unit's own files.
+#[test]
+fn reconcile_dir_output_sweeps_nothing_when_the_working_dir_name_holds_a_glob_character() {
+    for form in ["dist", "./dist"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let wd = tmp.path().join("a/pro[j]");
+        let sibling = tmp.path().join("a/proj");
+        std::fs::create_dir_all(wd.join("dist")).unwrap();
+        std::fs::create_dir_all(sibling.join("dist")).unwrap();
+        std::fs::write(sibling.join("dist/x"), b"x").unwrap();
+        std::fs::write(tmp.path().join("a/sentinel"), b"s").unwrap();
+        std::fs::write(wd.join("dist/a"), b"a").unwrap();
+        let abs = wd.to_str().unwrap();
+        reconcile_dir_output(&wd, &format!("{abs}/{form}"), &BTreeSet::new());
+        assert!(sibling.join("dist/x").is_file(), "{form}: swept the sibling unit");
+        assert!(tmp.path().join("a/sentinel").is_file(), "{form}");
+        assert!(wd.join("dist/a").is_file(), "{form}: swept the unit's own files");
+    }
+}
+
+/// A recorded empty directory survives a hit whatever spelling the root takes
+/// (`./out`, `<wd>/./out`): the kept set holds it in the form
+/// `empty_dirs_under` records.
+#[test]
+fn reconcile_keeps_a_recorded_empty_dir_under_any_root_spelling() {
+    let tmp = tempfile::tempdir().unwrap();
+    let wd = tmp.path().join("a/proj");
+    let abs = format!("{}/./out", wd.display());
+    for root in ["./out", abs.as_str()] {
+        std::fs::create_dir_all(wd.join("out/keep")).unwrap();
+        let kept: BTreeSet<String> = crate::empty_dirs_under(&wd, root).into_iter().collect();
+        std::fs::create_dir_all(wd.join("out/stray")).unwrap();
+        reconcile_dir_output(&wd, root, &kept);
+        assert!(wd.join("out/keep").is_dir(), "{root}: recorded empty dir pruned");
+        assert!(!wd.join("out/stray").exists(), "{root}: unrecorded empty dir kept");
+    }
+}

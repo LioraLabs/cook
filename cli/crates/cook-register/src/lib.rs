@@ -254,6 +254,24 @@ pub enum RegisterError {
     #[error("recipe '{recipe}': {message}")]
     AfterUnresolved { recipe: String, message: String },
 
+    /// CS-0274: a directory output (CS-0119) naming the unit's working
+    /// directory, an ancestor, or a path outside it would make the build own,
+    /// and so sweep, the project itself.
+    #[error(
+        "output {output:?} (recipe {recipe}) is a directory output covering the unit's own directory or a path outside it: \
+         Cook would delete everything there the command did not write; name a subdirectory, e.g. \"dist/\""
+    )]
+    DirOutputOwnsRoot { recipe: String, output: String },
+
+    /// CS-0274: a directory output (CS-0119) whose path holds a glob
+    /// metacharacter. Cook would sweep every directory the pattern matches,
+    /// which on a cache hit includes the user's own files.
+    #[error(
+        "output {output:?} (recipe {recipe}) is a directory output with a wildcard in its path: \
+         Cook owns and sweeps a directory output whole, so it must name one directory; name it, e.g. \"dist/\", or declare files with a glob, e.g. \"dist/**\""
+    )]
+    DirOutputIsPattern { recipe: String, output: String },
+
     /// CS-0219 §22.5.4: a `produce` body read a probe key it did not declare in
     /// `inputs.requires`. Also the guard against a produce body naming itself,
     /// which §22.5.9's `requires`-graph cycle check cannot see.

@@ -36,6 +36,67 @@ pub fn is_dir_output(s: &str) -> bool {
     s.ends_with('/')
 }
 
+/// The one lexical "does this output stay inside the unit" rule (CS-0274),
+/// read by registration, the build-owned sweep and the verify re-run.
+///
+/// True when output declaration `p` names the unit's working directory `wd`
+/// itself, one of its ancestors, or anywhere outside it: `./`, `x/../`, `../`,
+/// `/x`, `<wd>`, `<wd>/../x`. Lexical: `p` is read relative to `wd`, an absolute
+/// `p` lying under `wd` is first rebased onto it (`<wd>/./dist/` is `./dist/`,
+/// the form cook_pnpm declares), and any other absolute `p` leaves. Symlinks are
+/// not followed, and glob metacharacters mean nothing here: `**/` is inside by
+/// this rule, and refusing a pattern as a directory output is a separate check.
+pub fn output_leaves_unit(p: &str, wd: &str) -> bool {
+    let rel = unit_relative(p, wd);
+    let rel = Path::new(&rel);
+    escapes_base(rel) || normalize(rel).as_os_str().is_empty()
+}
+
+/// Why a directory output `p` cannot be swept as build-owned (CS-0274).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DirOutputRefusal {
+    /// A glob metacharacter anywhere in the path as written: Cook globs the
+    /// whole string when it records and sweeps, so a `[` in the working dir's
+    /// own name counts too.
+    Pattern,
+    /// It names the working directory, an ancestor, or somewhere outside it.
+    LeavesUnit,
+}
+
+/// The one decision on whether directory output `p` may be swept, read by
+/// registration and by the sweep (CS-0274). Lexical: a glob metacharacter
+/// anywhere in `p` as written is a pattern (an absolute `p` under a `wd` named
+/// with `[` included — the record and the sweep would read that name as a
+/// glob); otherwise [`output_leaves_unit`] decides. `None` means it may be swept.
+pub fn dir_output_refusal(p: &str, wd: &str) -> Option<DirOutputRefusal> {
+    if has_glob_meta(p) {
+        Some(DirOutputRefusal::Pattern)
+    } else if output_leaves_unit(p, wd) {
+        Some(DirOutputRefusal::LeavesUnit)
+    } else {
+        None
+    }
+}
+
+/// `p` relative to `wd` when it is an absolute path under `wd`, else `p`
+/// unchanged. The rebasing step of [`output_leaves_unit`].
+pub fn unit_relative(p: &str, wd: &str) -> String {
+    match rebase(p, wd.trim_end_matches('/'), "") {
+        Some(rest) => rest.trim_start_matches('/').to_string(),
+        None => p.to_string(),
+    }
+}
+
+/// Rebase `p` from under `from` to under `to` by string prefix (not
+/// `Path::strip_prefix`, which would drop the `./` segments recorded output
+/// names keep). `None` when `p` is not `from` or inside it.
+pub fn rebase(p: &str, from: &str, to: &str) -> Option<String> {
+    match p.strip_prefix(from) {
+        Some(rest) if rest.is_empty() || rest.starts_with('/') => Some(format!("{to}{rest}")),
+        _ => None,
+    }
+}
+
 /// A non-literal output entry whose concrete file set is resolved only after
 /// the command runs: a glob pattern (CS-0085) or a directory output (CS-0119).
 pub fn is_terminal_output(s: &str) -> bool {

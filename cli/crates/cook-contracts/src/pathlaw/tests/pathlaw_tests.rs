@@ -1,6 +1,6 @@
 use super::{
-    covers_root, covers_too_broad, escapes_base, has_glob_meta, is_dir_output,
-    is_root_wildcard_output, normalize,
+    covers_root, covers_too_broad, dir_output_refusal, escapes_base, has_glob_meta, is_dir_output,
+    is_root_wildcard_output, normalize, output_leaves_unit, unit_relative, DirOutputRefusal,
 };
 use std::path::{Path, PathBuf};
 
@@ -160,4 +160,43 @@ fn root_wildcard_outputs() {
     for e in ["dist/**", "out/*.o", "./dist/*", "a.txt", "dist/", "../x/*", "", "/abs/*"] {
         assert!(!is_root_wildcard_output(e), "{e}");
     }
+}
+
+#[test]
+fn outputs_leaving_the_unit() {
+    let wd = "/w/proj";
+    for e in [
+        "./", ".", "", "./.", "x/..", "x/../", "../", "../sib/", "/", "/x", "//**", "a/../../b/",
+        "/w/proj", "/w/proj/", "/w/proj/./", "/w/proj/x/..", "/w/proj/../x/", "/w/projx/dist/", "/w/other/dist/",
+    ] {
+        assert!(output_leaves_unit(e, wd), "{e}");
+    }
+    for e in ["dist/", "out/", "./dist/", "a/../b/", "**", "**/", "dist/**", "x/./", "/w/proj/./dist/", "/w/proj/dist/**", "/w/proj//dist/"] {
+        assert!(!output_leaves_unit(e, wd), "{e}");
+    }
+    // A unit at the filesystem root: every absolute path is under it.
+    assert!(!output_leaves_unit("/dist/", "/"));
+    assert!(output_leaves_unit("/", "/"));
+    // A working dir whose own name holds glob metacharacters is still a prefix.
+    assert!(!output_leaves_unit("/w/pro[j]/./dist/", "/w/pro[j]"));
+    assert_eq!(unit_relative("/w/pro[j]/./dist/", "/w/pro[j]"), "./dist/");
+    assert_eq!(unit_relative("dist/", "/w/pro[j]"), "dist/");
+    // Trailing slash on the working dir changes nothing.
+    assert!(!output_leaves_unit("/w/proj/./dist/", "/w/proj/"));
+}
+
+#[test]
+fn a_directory_output_is_refused_as_a_pattern_or_as_leaving_the_unit() {
+    let wd = "/w/proj";
+    for e in ["**/", "src/*/", "a?/", "[x]/"] {
+        assert_eq!(dir_output_refusal(e, wd), Some(DirOutputRefusal::Pattern), "{e}");
+    }
+    for e in ["./", "../", "/x/", "x/../"] {
+        assert_eq!(dir_output_refusal(e, wd), Some(DirOutputRefusal::LeavesUnit), "{e}");
+    }
+    assert_eq!(dir_output_refusal("dist/", wd), None);
+    // The path as written is what gets globbed, the working dir's name included.
+    assert_eq!(dir_output_refusal("/w/pro[j]/./dist/", "/w/pro[j]"), Some(DirOutputRefusal::Pattern));
+    assert_eq!(dir_output_refusal("/w/proj/./dist/", "/w/proj"), None);
+    assert_eq!(dir_output_refusal("/w/pro[j]/*/", "/w/pro[j]"), Some(DirOutputRefusal::Pattern));
 }

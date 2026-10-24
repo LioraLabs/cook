@@ -225,12 +225,28 @@ mod gather_glob_tests;
 /// `working_dir/root` contains exactly `kept` (paths relative to `working_dir`,
 /// in the same form `resolve_glob` returns). Deletes every regular file under the
 /// subtree not in `kept`, then prunes directories left empty. Deletion is bounded
-/// strictly to the subtree; the root directory itself is preserved.
+/// strictly to the subtree; the root directory itself is preserved. A root that
+/// is `working_dir` itself, an ancestor, outside it, or a pattern is never swept
+/// (CS-0274): registration refuses it, and this holds even when that was
+/// bypassed. Nor is a root reached through a symlink swept: removing through it
+/// removes what it points to.
 pub fn reconcile_dir_output(working_dir: &Path, root: &str, kept: &BTreeSet<String>) {
+    use cook_contracts::pathlaw::{dir_output_refusal, unit_relative};
+    let root = root.trim_end_matches('/');
+    let wd = working_dir.to_string_lossy();
+    if dir_output_refusal(root, &wd).is_some() {
+        return;
+    }
+    let rel = unit_relative(root, &wd);
+    if !crate::no_link_on_the_way(working_dir, Path::new(&rel)) {
+        eprintln!(
+            "cook: warning: directory output {root:?} is reached through a symlink, so Cook does not sweep it: files there the command did not write stay"
+        );
+        return;
+    }
     // COOK-306: sweeping strays writes to the tree, so no memoised mtime can
     // be trusted afterwards.
     statmemo::disarm();
-    let root = root.trim_end_matches('/');
     // A link in the subtree is an entry: removing it removes the link, never
     // what it points to.
     let present = resolve_output_glob(working_dir, &format!("{root}/**/*"));
