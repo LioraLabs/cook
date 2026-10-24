@@ -32,6 +32,7 @@ const BASELINE_GLOBS: &[&str] = &[
     "DRONE_*",
 ];
 
+#[derive(Clone)]
 pub struct EnvDenylist {
     /// Exact-match names.
     names: HashSet<String>,

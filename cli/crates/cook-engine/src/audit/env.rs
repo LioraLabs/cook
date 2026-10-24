@@ -36,8 +36,8 @@ pub fn unobserved_programs(text: &str, start_cwd: &Path, recorder: &Path) -> BTr
 
 /// Names the audit never reports as unkeyed, on top of the key computation's
 /// own denylist: locale (`LANG`, `LANGUAGE`, `LC_*`) and the dynamic loader
-/// (`LD_*`) are queried by every process and say nothing about the step. A
-/// trailing `*` is a prefix glob. The recorder's own variables are
+/// (`LD_*`) are queried by every process and say nothing about the step. They are
+/// globs, matched by the key denylist's own matcher. The recorder's own variables are
 /// ignored too (see [`env_ignored`]).
 pub const AUDIT_IGNORED_ENV: &[&str] = &["LANG", "LANGUAGE", "LC_*", "LD_*"];
 
@@ -45,10 +45,6 @@ fn env_ignored(name: &str, denylist: &cook_cache::envkey::EnvDenylist) -> bool {
     denylist.is_ignored(name)
         || name == cook_envtrace::OUT_VAR
         || cook_envtrace::REFERENCES.iter().any(|(r, _)| *r == name)
-        || AUDIT_IGNORED_ENV.iter().any(|p| match p.strip_suffix('*') {
-            Some(prefix) => name.starts_with(prefix),
-            None => name == *p,
-        })
 }
 
 /// The process-environment names a unit keys: every literal `getenv("NAME")`
@@ -71,7 +67,9 @@ pub(crate) fn unkeyed_env(
     keyed: &BTreeSet<String>,
     denylist: &cook_cache::envkey::EnvDenylist,
 ) -> BTreeSet<String> {
-    queried.iter().filter(|n| !keyed.contains(*n) && !env_ignored(n, denylist)).cloned().collect()
+    let mut deny = denylist.clone();
+    deny.extend_with(&AUDIT_IGNORED_ENV.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+    queried.iter().filter(|n| !keyed.contains(*n) && !env_ignored(n, &deny)).cloned().collect()
 }
 
 /// One recorder file: a line per lookup, `pid tid index long count NAME` (index in

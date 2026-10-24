@@ -171,7 +171,10 @@ pub enum Cmd {
     /// Re-run a recipe's units under strace inside an isolated overlay of the
     /// project and report the files they read that no declaration covers
     /// (`read`) and the paths they probed that were absent (`absent`). The real
-    /// tree and the user cache are never written.
+    /// tree and the user cache are never written; the one exception is
+    /// `--baseline`, which writes cook-audit-baseline.json into the project
+    /// root. A nested cook inside an audited step may read the shared store,
+    /// never write it.
     ///
     /// Exits 1 while any finding remains that cook-audit-baseline.json (if
     /// any) does not accept, or any unit errors; `--baseline` adds the
