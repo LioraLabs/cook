@@ -979,6 +979,7 @@ fn apply_eviction_removes_only_the_planned_keys() {
         max_size: None,
         older_than: Some(std::time::Duration::from_secs(1000)),
         low_water: 1.0,
+        honour_exempt_kinds: true,
     };
     let plan = plan_eviction(&aged_candidates, &policy, now);
     assert_eq!(plan.victims.len(), 1, "plan must name exactly one victim");

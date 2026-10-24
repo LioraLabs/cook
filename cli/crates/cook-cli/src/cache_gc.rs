@@ -62,8 +62,13 @@ pub fn cmd_cache_gc(globals: &Globals, args: &CacheGcArgs) -> Result<(), CookErr
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
-    // `--max-size N` evicts to exactly N (low_water 1.0), per the ticket.
-    let policy = EvictPolicy::manual(max_size, older_than);
+    // `--max-size N` evicts to exactly N (low_water 1.0), per the ticket. A
+    // `--store` may be served, so its puts' claimed kinds earn no exemption.
+    let policy = if args.store.is_some() {
+        EvictPolicy::served(max_size, older_than)
+    } else {
+        EvictPolicy::manual(max_size, older_than)
+    };
 
     // A missing store is a zero-work report, not an error: `enumerate_store`
     // returns `None` rather than creating anything, mirroring `du`'s

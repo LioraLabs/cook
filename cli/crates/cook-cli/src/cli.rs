@@ -406,7 +406,8 @@ pub struct CacheGcArgs {
     /// Sweep this store directory instead of the project's: the store a
     /// `cook cache serve` serves (or any store dir). Needs no project; safe
     /// beside the server, since a concurrent eviction only turns an entry
-    /// into a miss.
+    /// into a miss. `--max-size` sizes every entry here alike: a served
+    /// store's kinds are what its puts claimed, so none is exempt.
     #[arg(long)]
     pub store: Option<std::path::PathBuf>,
 }

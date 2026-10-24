@@ -26,7 +26,8 @@
 //!    eviction costs one rebuild.
 //!
 //! 2. **Size pass** (`max_size`): runs second, over whatever the age pass
-//!    did not already take, and evicts non-exempt candidates only (`kind:
+//!    did not already take, and evicts non-exempt candidates only — unless
+//!    the policy is a served store's (below) — (`kind:
 //!    None` is the legacy file case, per `ArtifactMeta::kind`'s doc, and is
 //!    NOT exempt — nor is any unrecognised kind string). Candidates are
 //!    evicted ascending by `last_access` (ties broken by `key`, so the plan
@@ -55,6 +56,17 @@
 //! them from the size sweep is nearly free. `older_than` is what keeps the
 //! exempt set bounded, since the age pass applies to every kind (above).
 //!
+//! ## A served store honours no claimed kind
+//!
+//! The exemption trusts `kind`, and only the project's own store can: there
+//! the build wrote it. On a store `cook cache serve` serves, `kind` is
+//! whatever a put claimed, so a token holder could claim an exempt kind for
+//! artifact-sized bytes that `--max-size` then never reclaims.
+//! [`EvictPolicy::served`] (what `cook cache gc --store` sweeps with) sizes
+//! every entry alike. The server cannot refuse those kinds instead: real
+//! clients publish all of them. The cost is the strand above — an evicted
+//! manifest's unit is a shared miss until a rebuild republishes it.
+//!
 //! ## Determinant manifests
 //!
 //! A manifest with no blob beside it is a candidate of its own, ranked by its
@@ -72,7 +84,8 @@ use std::time::Duration;
 
 use crate::cache::cas::{artifact_kind, CloudKey, EvictCandidate};
 
-/// Kinds the size-driven sweep must never evict (milestone D1).
+/// Kinds the project store's size sweep spares (milestone D1); a served
+/// store's sweep spares none (module doc).
 pub const SIZE_SWEEP_EXEMPT_KINDS: &[&str] = &[
     artifact_kind::DISCOVERED_INPUT_SETS,
     artifact_kind::DISCOVERED_INPUTS,
@@ -123,6 +136,9 @@ pub struct EvictPolicy {
     /// eligible), and a value above `1.0` under-sweeps (targets above
     /// `max_size`). No panic, no UB either way.
     pub low_water: f64,
+    /// Whether the size pass spares [`SIZE_SWEEP_EXEMPT_KINDS`]. `false` for
+    /// a served store, whose kinds are claims (module doc).
+    pub honour_exempt_kinds: bool,
 }
 
 impl EvictPolicy {
@@ -132,6 +148,16 @@ impl EvictPolicy {
             max_size,
             older_than,
             low_water: 1.0,
+            honour_exempt_kinds: true,
+        }
+    }
+
+    /// `cook cache gc --store`: [`Self::manual`], but every kind is sized
+    /// alike, since a served store's kinds are what its puts claimed.
+    pub fn served(max_size: Option<u64>, older_than: Option<Duration>) -> Self {
+        Self {
+            honour_exempt_kinds: false,
+            ..Self::manual(max_size, older_than)
         }
     }
 
@@ -148,6 +174,7 @@ impl EvictPolicy {
             max_size: Some(max_size),
             older_than: None,
             low_water: DEFAULT_LOW_WATER,
+            honour_exempt_kinds: true,
         }
     }
 }
@@ -226,7 +253,10 @@ pub fn plan_eviction(candidates: &[EvictCandidate], policy: &EvictPolicy, now: u
         let target = (max_size as f64 * policy.low_water) as u64;
         let mut eligible: Vec<&EvictCandidate> = candidates
             .iter()
-            .filter(|c| !evicted.contains(&c.key) && !is_size_sweep_exempt(c.kind.as_deref()))
+            .filter(|c| {
+                !evicted.contains(&c.key)
+                    && !(policy.honour_exempt_kinds && is_size_sweep_exempt(c.kind.as_deref()))
+            })
             .collect();
         eligible.sort_by_key(|c| size_eviction_order(c));
         for c in eligible {

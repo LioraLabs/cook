@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- **`cook cache gc --store` sizes every kind alike.** On a store
+  `cook cache serve` serves, an entry's kind is whatever its put claimed,
+  so a put claiming a manifest, symlink or directory kind kept its bytes
+  past `--max-size`. A swept `--store` now spares no kind; the project
+  store's own sweeps keep sparing the manifests their artifacts hang on.
+
 - **`cook cache gc` and `du` count and evict determinant manifests**
   (CS-0270). A manifest stored with no blob beside it (every one a
   `cook cache serve` store holds) was never sized or evicted, so the

@@ -17,6 +17,7 @@ fn none_policy() -> EvictPolicy {
         max_size: None,
         older_than: None,
         low_water: 1.0,
+        honour_exempt_kinds: true,
     }
 }
 
@@ -113,6 +114,7 @@ fn age_sweep_evicts_every_kind_including_exempt_ones() {
         max_size: None,
         older_than: Some(std::time::Duration::from_secs(100)),
         low_water: 1.0,
+        honour_exempt_kinds: true,
     };
     let plan = plan_eviction(&candidates, &policy, 1_000);
 
@@ -131,6 +133,7 @@ fn age_cutoff_is_strict_so_an_exactly_at_cutoff_object_survives() {
         max_size: None,
         older_than: Some(std::time::Duration::from_secs(100)),
         low_water: 1.0,
+        honour_exempt_kinds: true,
     };
     let plan = plan_eviction(&candidates, &policy, 1_000);
 
@@ -147,6 +150,7 @@ fn zero_last_access_is_never_an_age_victim_but_is_lru_first() {
         max_size: None,
         older_than: Some(std::time::Duration::from_secs(1)),
         low_water: 1.0,
+        honour_exempt_kinds: true,
     };
     let age_plan = plan_eviction(&[unknown_mtime.clone()], &age_policy, 1_000_000);
     assert!(age_plan.victims.is_empty(), "last_access == 0 must never be an age victim");
@@ -170,6 +174,7 @@ fn both_knobs_together_never_double_count_a_victim() {
         max_size: Some(1), // size pass alone would also want to evict it
         older_than: Some(std::time::Duration::from_secs(1)), // now=1000 -> cutoff=999
         low_water: 1.0,
+        honour_exempt_kinds: true,
     };
     let plan = plan_eviction(&candidates, &policy, 1_000);
 
@@ -193,6 +198,7 @@ fn both_knobs_together_the_size_pass_still_evicts_after_the_age_pass() {
         max_size: Some(60), // target=60 (low_water=1.0)
         older_than: Some(std::time::Duration::from_secs(500)),
         low_water: 1.0,
+        honour_exempt_kinds: true,
     };
     let plan = plan_eviction(&candidates, &policy, 1_000);
 
@@ -217,6 +223,7 @@ fn age_pass_already_under_budget_means_the_size_pass_evicts_nothing() {
         // pass frees 800 the running total is 50, already <= 100.
         older_than: Some(std::time::Duration::from_secs(50)),
         low_water: 1.0,
+        honour_exempt_kinds: true,
     };
     let plan = plan_eviction(&candidates, &policy, 1_000);
 
@@ -239,6 +246,7 @@ fn low_water_below_one_sweeps_past_max_size() {
         max_size: Some(100),
         older_than: None,
         low_water: DEFAULT_LOW_WATER, // 0.8 -> target = 80
+        honour_exempt_kinds: true,
     };
     let plan = plan_eviction(&candidates, &policy, 1_000);
 
@@ -266,6 +274,7 @@ fn plan_is_deterministic_under_shuffled_input() {
         max_size: Some(50),
         older_than: Some(std::time::Duration::from_secs(5)),
         low_water: 1.0,
+        honour_exempt_kinds: true,
     };
 
     let plan_a = plan_eviction(&candidates, &policy, 1_000);
@@ -414,4 +423,19 @@ fn every_artifact_kind_is_either_sweep_exempt_or_deliberately_not() {
         SIZE_SWEEP_EXEMPT_KINDS.len(),
         "a kind entered SIZE_SWEEP_EXEMPT_KINDS without being listed here"
     );
+}
+
+/// A served store's kinds are what its puts claimed, so `served` sizes every
+/// exempt kind like a file while `manual` and `auto` keep sparing them.
+#[test]
+fn a_served_sweep_evicts_every_exempt_kind_and_a_local_one_none() {
+    for (i, kind) in SIZE_SWEEP_EXEMPT_KINDS.iter().enumerate() {
+        let c = candidate(i as u8, 1_000, 1, Some(kind));
+        let served = plan_eviction(std::slice::from_ref(&c), &EvictPolicy::served(Some(0), None), 10);
+        assert_eq!(served.victims, vec![c.clone()], "{kind} must be swept on a served store");
+        for local in [EvictPolicy::manual(Some(0), None), EvictPolicy::auto(0)] {
+            let plan = plan_eviction(std::slice::from_ref(&c), &local, 10);
+            assert!(plan.victims.is_empty(), "{kind} must survive a local size sweep");
+        }
+    }
 }

@@ -581,3 +581,31 @@ fn an_honest_link_out_of_a_directory_output_is_not_followed() {
     wait_exit(&mut served.0, Duration::from_secs(5));
     let _ = log.join();
 }
+
+/// A token holder's put can claim any kind, so a served store sizes every entry
+/// alike: each kind the project store spares, and a manifest beside one, is
+/// reclaimed by `--max-size` beside the live server.
+#[test]
+fn puts_claiming_every_exempt_kind_are_reclaimed_by_a_store_size_sweep() {
+    use cook_engine::cook_cache::SIZE_SWEEP_EXEMPT_KINDS;
+    let tmp = TempDir::new().unwrap();
+    let (_served, addr, _log) = start(&tmp);
+    let store = tmp.path().join("store");
+    let good = client(&addr, TOKEN);
+    let keys: Vec<[u8; 32]> = (1..=SIZE_SWEEP_EXEMPT_KINDS.len() as u8).map(|b| [b; 32]).collect();
+    for (key, kind) in keys.iter().zip(SIZE_SWEEP_EXEMPT_KINDS) {
+        let mut m = meta();
+        m.kind = Some(kind.to_string());
+        good.put(key, &mut vec![b'x'; 100_000].as_slice(), &mut m).unwrap_or_else(|e| panic!("put {kind}: {e:?}"));
+    }
+    let hex: String = keys[0].iter().map(|b| format!("{b:02x}")).collect();
+    let manifest = store.join(&hex[..2]).join(format!("{}.provenance.json", &hex[2..]));
+    std::fs::write(&manifest, vec![b'm'; 100_000]).unwrap();
+
+    let out = cook(&tmp).args(["cache", "gc", "--max-size", "1", "--store"]).arg(&store).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    for (key, kind) in keys.iter().zip(SIZE_SWEEP_EXEMPT_KINDS) {
+        assert!(good.get(key).unwrap().is_none(), "a put claiming {kind} survived --max-size");
+    }
+    assert!(!manifest.exists(), "the manifest beside an exempt-kind blob survived --max-size");
+}
