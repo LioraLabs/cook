@@ -1,0 +1,30 @@
+files deps
+    "lock"
+    covers "**/node_modules"
+
+probe channel
+    covers "~/.tc"
+    >{
+        return { v = os.getenv("TOOL_CHANNEL") or "" }
+    }
+
+probe mode
+    >{
+        return { v = os.getenv("APP_MODE") or "" }
+    }
+
+recipe build
+    seal "src/a.ts"
+    seal ".lintrc.json"
+    seal ".lint/**"
+    seal "assets/head.glb"
+    seal "pkg/package.json"
+    seal deps
+    seal channel
+    seal mode
+    test { cat .lintrc.json .lint/rules.js src/a.ts >/dev/null }
+    test { cat assets/head.glb >/dev/null }
+    test { cat pkg/package.json >/dev/null }
+    test { cat node_modules/dep/index.js >/dev/null }
+    test { node -e 'require("fs").readFileSync(require("os").homedir() + "/.tc/" + (process.env.TOOL_CHANNEL || "stable") + "/v")' }
+    test { node -e 'if (process.env.APP_MODE === "production") {}' }

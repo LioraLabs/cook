@@ -1601,6 +1601,19 @@ fn register_cookfile_rejects_duplicate_dynamic_registration() {
 }
 
 #[test]
+fn register_cookfile_refuses_the_reserved_recipe_name_star() {
+    use crate::{register_cookfile, RegisterError, RegisterSessionBuilder};
+
+    let lua_src = r#"cook.recipe("*", {}, function() end)"#;
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let builder = RegisterSessionBuilder::new(tmpdir.path().to_path_buf(), Default::default());
+    match register_cookfile(builder, lua_src, None).unwrap_err() {
+        RegisterError::Lua(e) => assert!(e.to_string().contains("`*` is reserved"), "{e}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+#[test]
 fn register_cookfile_captures_all_sites_for_triple_collision() {
     use crate::{register_cookfile, RegisterError, RegisterSessionBuilder};
 

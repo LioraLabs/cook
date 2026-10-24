@@ -2586,11 +2586,20 @@ fn json_shape(v: &serde_json::Value) -> &'static str {
 /// delay the same diagnostic by one CI cycle. Multiple sites for a
 /// single colliding name are all preserved in the error.
 ///
+/// Also refuses the reserved name `*` (CS-0272).
+///
 /// Re-used by `list_names` in Task 2.4.
 fn detect_collisions(recipes: &[crate::capture::RegisteredRecipe]) -> Result<(), RegisterError> {
     use std::collections::BTreeMap;
     let mut by_name: BTreeMap<&str, Vec<RegistrationSite>> = BTreeMap::new();
     for r in recipes {
+        // CS-0272: `*` is the audit baseline's project-wide entry, never a recipe.
+        if r.name == "*" {
+            return Err(RegisterError::Lua(mlua::Error::runtime(
+                "recipe name `*` is reserved: it is the project-wide entry of cook-audit-baseline.json, \
+                 so a recipe of that name would be read as policy for every recipe",
+            )));
+        }
         let kind = match (r.source, r.kind) {
             (crate::capture::RegistrationSource::Static { .. }, crate::RecipeKind::Recipe) => {
                 RegistrationSiteKind::SurfaceRecipe

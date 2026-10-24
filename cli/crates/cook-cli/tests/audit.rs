@@ -1075,6 +1075,79 @@ fn a_tool_that_reads_a_different_file_each_run_settles_after_two_baselines() {
     }
 }
 
+/// The documented OS-root set (§17.9): what a person pastes under `"*"` -> `"read"`.
+const OS_ROOTS: &[&str] = &[
+    "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/libx32", "/usr", "/usr/bin", "/usr/sbin", "/usr/lib", "/usr/lib32", "/usr/lib64", "/usr/libx32",
+    "/usr/libexec", "/usr/share", "/usr/include", "/etc",
+    "/bin/*", "/sbin/*", "/lib/**", "/lib32/**", "/lib64/**", "/libx32/**", "/usr/bin/*", "/usr/sbin/*", "/usr/lib/**", "/usr/lib32/**",
+    "/usr/lib64/**", "/usr/libx32/**", "/usr/libexec/**", "/usr/share/**", "/usr/include/**", "/etc/**",
+];
+
+fn write_os_roots(dir: &Path) {
+    let doc = serde_json::json!({"version": 1, "recipes": {"*": {"read": OS_ROOTS}}});
+    fs::write(dir.join(BASELINE), serde_json::to_vec_pretty(&doc).unwrap()).unwrap();
+}
+
+fn no_absolute_literals(b: &serde_json::Value) {
+    for (recipe, kinds) in b["recipes"].as_object().unwrap() {
+        if recipe == "*" {
+            continue;
+        }
+        for (kind, entries) in kinds.as_object().unwrap() {
+            for e in entries.as_array().unwrap() {
+                assert!(!e.as_str().unwrap().starts_with('/'), "{recipe}/{kind}: {e} in {b}");
+            }
+        }
+    }
+}
+
+#[test]
+fn the_project_wide_os_roots_keep_system_reads_out_of_the_baseline_and_the_findings() {
+    // Listing and stat-ing the roots reads the directories themselves, which `/usr/lib/**` does not match.
+    let dir = project(&LINT.replace("test -f missing.cfg", "ls /usr/lib >/dev/null; stat /usr /etc >/dev/null; test -f missing.cfg"));
+    let xdg = TempDir::new().unwrap();
+    write_os_roots(dir.path());
+    let Some(out) = audit(dir.path(), xdg.path(), &["lint", "--baseline"]) else { return };
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    let b = baseline_json(dir.path());
+    no_absolute_literals(&b);
+    assert!(b["recipes"]["lint"]["read"].as_array().unwrap().iter().any(|e| e == ".lintrc"), "{b}");
+    assert_eq!(b["recipes"]["*"]["read"].as_array().unwrap().len(), OS_ROOTS.len(), "the OS set is carried unchanged: {b}");
+    let out = audit(dir.path(), xdg.path(), &["lint", "--json"]).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stdout));
+    let doc = json(&out);
+    assert!(doc["stale"].as_array().unwrap().is_empty(), "\"*\" is never stale: {doc}");
+    audit(dir.path(), xdg.path(), &["lint", "--baseline", "--prune"]).unwrap();
+    assert_eq!(baseline_json(dir.path())["recipes"]["*"]["read"], b["recipes"]["*"]["read"], "prune keeps \"*\"");
+}
+
+#[test]
+fn a_unit_reading_a_different_os_file_each_run_gives_a_byte_identical_baseline() {
+    // Two OS files the unit alternates between, as two distros spell the same file differently.
+    let present = ["/etc/passwd", "/etc/group"];
+    if !present.iter().all(|p| Path::new(p).is_file()) {
+        eprintln!("skipping: {present:?} are not both files here");
+        return;
+    }
+    let toggle = TempDir::new().unwrap();
+    let which = toggle.path().join("which");
+    let cookfile = format!("recipe lint\n    seal \"src/a.ts\"\n    test {{ cat \"$(cat {})\" >/dev/null }}\n", which.display());
+    let dir = project(&cookfile);
+    write_os_roots(dir.path());
+    let xdg = TempDir::new().unwrap();
+    let mut seen = vec![];
+    for f in present {
+        fs::write(&which, f).unwrap();
+        let Some(out) = audit(dir.path(), xdg.path(), &["lint", "--baseline"]) else { return };
+        assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+        no_absolute_literals(&baseline_json(dir.path()));
+        seen.push(fs::read(dir.path().join(BASELINE)).unwrap());
+    }
+    assert_eq!(seen[0], seen[1], "{}", String::from_utf8_lossy(&seen[1]));
+    let out = audit(dir.path(), xdg.path(), &["lint", "--json"]).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stdout));
+}
+
 #[test]
 fn a_recipe_removed_from_the_cookfile_is_stale_and_only_prune_drops_its_literals() {
     let cookfile = format!("{LINT}recipe other\n    seal \"src/a.ts\"\n    test {{ cat src/a.ts >/dev/null }}\n");

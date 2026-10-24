@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "recipes": {
+    "*": {
+      "read": [
+        "/bin",
+        "/sbin",
+        "/lib",
+        "/lib32",
+        "/lib64",
+        "/libx32",
+        "/usr",
+        "/usr/bin",
+        "/usr/sbin",
+        "/usr/lib",
+        "/usr/lib32",
+        "/usr/lib64",
+        "/usr/libx32",
+        "/usr/libexec",
+        "/usr/share",
+        "/usr/include",
+        "/etc",
+        "/bin/*",
+        "/sbin/*",
+        "/lib/**",
+        "/lib32/**",
+        "/lib64/**",
+        "/libx32/**",
+        "/usr/bin/*",
+        "/usr/sbin/*",
+        "/usr/lib/**",
+        "/usr/lib32/**",
+        "/usr/lib64/**",
+        "/usr/libx32/**",
+        "/usr/libexec/**",
+        "/usr/share/**",
+        "/usr/include/**",
+        "/etc/**"
+      ]
+    }
+  }
+}

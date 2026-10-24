@@ -564,6 +564,11 @@ the failure mode, so cook gives you tools to see the key:
   `cook-audit-baseline.json` (it never removes one; `--baseline --prune` keeps
   only this run's literals, never a hand-written pattern); later audits then fail only on findings
   it does not accept and name entries that no longer match as stale.
+  A recipe named `"*"` in the baseline holds project-wide entries that apply to
+  every recipe (never stale, never rewritten); §17.9 documents the OS-root set
+  to paste there so one baseline fits every Linux distribution (after pasting it,
+  run `cook audit --baseline --prune` once: plain `--baseline` keeps the
+  machine-specific literals already written). `*` is not a name a recipe may take.
   `env` findings can differ between environments when a tool's own lookups depend on a value, so regenerate the baseline in every environment the gate runs in (for example once in CI, without `--prune`); the baseline is a union across them.
 
 Per-step **dispositions** control keying and sharing. `seal` (the verb from

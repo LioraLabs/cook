@@ -223,6 +223,8 @@ A present `origin` whose value is not a string, or which is the empty string, MU
 
 A conforming implementation MUST diagnose a duplicate name with a single error that names the offending recipe and identifies both registration sites by their source line. The diagnostic MUST distinguish surface declarations from register-phase Lua calls. The mechanism by which an implementation distinguishes the two registration paths is implementation-defined; the reference implementation tags surface registrations via a codegen-private helper while leaving the public `cook.recipe` API unchanged. See §{rationale.recipe-name-uniqueness}.
 
+A conforming implementation that spells the project-wide audit baseline entry (§{exec.cache.audit}) as a recipe named `*` MUST refuse the recipe name `*` at registration, whatever the registration site, with a register-phase error that says the name is reserved for that entry.
+
 ## 22.4. Test units [#lua.cook-add-test]
 
 A test unit is an ordinary work unit. It is recorded by `cook.add_unit` (§{lua.add-unit}) with `step_kind = "test"` and an empty output list; there is no separate registration function. The code generator lowers each `test_step` (§{steps.test}) to exactly one such call.

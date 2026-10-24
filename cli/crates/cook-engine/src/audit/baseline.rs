@@ -11,6 +11,11 @@ use super::{AuditReport, FindingKind};
 /// The tracked file, at the project root.
 pub const BASELINE_FILE: &str = "cook-audit-baseline.json";
 
+/// The project-wide pseudo-recipe: its entries, per kind, apply to every recipe
+/// in addition to the recipe's own. It is a policy set a person writes, so it is
+/// never judged, written, pruned or reported stale.
+pub const EVERY_RECIPE: &str = "*";
+
 /// Accepted entries: recipe -> kind (open set) -> literals and `*` patterns.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Baseline {
@@ -43,11 +48,16 @@ impl Baseline {
         Ok(Baseline { recipes: f.recipes })
     }
 
-    /// The `*` entries per (recipe, kind): what only a human writes, so a
-    /// handed-back baseline must carry exactly the old file's.
+    /// The project-wide recipe's entries per kind, empty kinds dropped.
+    fn project_wide(&self) -> BTreeMap<&str, &BTreeSet<String>> {
+        self.recipes.get(EVERY_RECIPE).into_iter().flatten().filter(|(_, v)| !v.is_empty()).map(|(k, v)| (k.as_str(), v)).collect()
+    }
+
+    /// The `*` patterns per (recipe, kind) of the registered recipes: what only
+    /// a human writes. (The `"*"` recipe is checked whole by [`Self::project_wide`].)
     pub fn patterns(&self) -> BTreeMap<(String, String), BTreeSet<String>> {
         let mut out = BTreeMap::new();
-        for (recipe, kinds) in &self.recipes {
+        for (recipe, kinds) in self.recipes.iter().filter(|(r, _)| *r != EVERY_RECIPE) {
             for (kind, entries) in kinds {
                 let pats: BTreeSet<String> = entries.iter().filter(|e| e.contains('*')).cloned().collect();
                 if !pats.is_empty() {
@@ -66,6 +76,9 @@ impl Baseline {
         let new = Self::parse(text).map_err(|e| format!("the handed-back baseline is invalid: {e}"))?;
         if new.patterns() != old.patterns() {
             return Err(format!("the handed-back baseline changes the `*` entries of {BASELINE_FILE}; only a person edits those"));
+        }
+        if new.project_wide() != old.project_wide() {
+            return Err(format!("the handed-back baseline changes the `\"{EVERY_RECIPE}\"` recipe of {BASELINE_FILE}; only a person edits that"));
         }
         Ok(new)
     }
@@ -117,9 +130,9 @@ struct Rules<'a> {
 }
 
 impl<'a> Rules<'a> {
-    fn of(entries: Option<&'a BTreeSet<String>>) -> Self {
+    fn of(entries: impl IntoIterator<Item = &'a String>) -> Self {
         let mut r = Rules { literals: vec![], patterns: vec![] };
-        for e in entries.into_iter().flatten() {
+        for e in entries {
             if e.contains('*') {
                 // Compiled at parse; a hand-built baseline with a bad pattern matches nothing.
                 if let Ok(f) = ConsumesFilter::compile(std::slice::from_ref(e)) {
@@ -130,6 +143,10 @@ impl<'a> Rules<'a> {
             }
         }
         r
+    }
+    /// The project-wide rules of one kind, compiled once.
+    fn of_project_wide(b: &'a Baseline, kind: &str) -> Self {
+        Self::of(b.project_wide().get(kind).copied().into_iter().flatten())
     }
     fn accepts(&self, item: &str) -> bool {
         self.literals.contains(&item) || self.patterns.iter().any(|(_, f)| f.matches(item))
@@ -153,14 +170,15 @@ fn observed(report: &AuditReport) -> Observed {
     o
 }
 
-/// Recipes in the closure none of whose units errored: only those can be judged.
+/// Recipes in the closure none of whose units errored, other than the
+/// project-wide `"*"`: only those can be judged.
 fn judged(report: &AuditReport) -> impl Iterator<Item = &String> {
-    report.recipes.iter().filter(|r| !report.units.iter().any(|u| &u.recipe == *r && u.errored()))
+    report.recipes.iter().filter(|r| r.as_str() != EVERY_RECIPE).filter(|r| !report.units.iter().any(|u| &u.recipe == *r && u.errored()))
 }
 
 /// Registered in the Cookfile; an empty `known` (a hand-built report) knows everything.
 fn is_known(report: &AuditReport, recipe: &str) -> bool {
-    report.known.is_empty() || report.known.contains(recipe)
+    recipe == EVERY_RECIPE || report.known.is_empty() || report.known.contains(recipe)
 }
 
 /// Drop accepted items from `report` and list stale entries.
@@ -168,12 +186,14 @@ pub fn apply(report: &mut AuditReport, baseline: &Baseline) -> Ratchet {
     let seen = observed(report);
     let mut accepted = 0;
     let findings = std::mem::take(&mut report.findings);
+    let every: BTreeMap<&str, Rules> = FindingKind::ALL.map(FindingKind::as_str).into_iter().map(|k| (k, Rules::of_project_wide(baseline, k))).collect();
     for mut f in findings {
-        let rules = Rules::of(baseline.recipes.get(&f.recipe).and_then(|ks| ks.get(f.kind.as_str())));
+        let own = Rules::of(baseline.recipes.get(&f.recipe).and_then(|ks| ks.get(f.kind.as_str())).into_iter().flatten());
+        let every = &every[f.kind.as_str()];
         match f.kind {
             FindingKind::Read | FindingKind::Absent => {
                 let before = f.paths.len();
-                f.paths.retain(|p| !rules.accepts(p));
+                f.paths.retain(|p| !own.accepts(p) && !every.accepts(p));
                 accepted += before - f.paths.len();
                 f.count = f.paths.len();
                 if f.paths.is_empty() {
@@ -181,7 +201,7 @@ pub fn apply(report: &mut AuditReport, baseline: &Baseline) -> Ratchet {
                 }
             }
             FindingKind::Env | FindingKind::EnvUnobserved => {
-                if rules.accepts(&f.root) {
+                if own.accepts(&f.root) || every.accepts(&f.root) {
                     accepted += 1;
                     continue;
                 }
@@ -200,7 +220,7 @@ pub fn apply(report: &mut AuditReport, baseline: &Baseline) -> Ratchet {
         for kind in FindingKind::ALL.map(FindingKind::as_str) {
             let Some(entries) = baseline.recipes.get(recipe).and_then(|ks| ks.get(kind)) else { continue };
             let items = seen.get(&(recipe.clone(), kind));
-            let rules = Rules::of(Some(entries));
+            let rules = Rules::of(entries);
             let hit = |i: &String| items.is_some_and(|s| s.contains(i));
             let dead_literals = rules.literals.iter().filter(|l| !hit(&l.to_string()));
             let dead_patterns = rules.patterns.iter().filter(|(_, f)| !items.is_some_and(|s| s.iter().any(|i| f.matches(i)))).map(|(p, _)| p);
@@ -218,22 +238,25 @@ pub fn apply(report: &mut AuditReport, baseline: &Baseline) -> Ratchet {
 /// containing `*` is left out, so it stays a finding), because tools read
 /// different files on identical runs. With `prune`, their literals are
 /// replaced by the observation instead, and the literals of recipes the
-/// Cookfile no longer registers are dropped. Patterns, unknown kinds, errored
-/// and out-of-closure recipes are carried forward unchanged.
+/// Cookfile no longer registers are dropped. The `"*"` recipe is never judged,
+/// written to or pruned, and an observation a `"*"` entry of that kind accepts
+/// is not written. Patterns, unknown kinds, errored and out-of-closure recipes
+/// are carried forward unchanged.
 pub fn regenerate(old: &Baseline, report: &AuditReport, prune: bool) -> Baseline {
     let seen = observed(report);
     let mut new = old.clone();
     for recipe in judged(report) {
         for kind in FindingKind::ALL.map(FindingKind::as_str) {
             let old_entries = old.recipes.get(recipe).and_then(|ks| ks.get(kind));
-            let rules = Rules::of(old_entries);
+            let rules = Rules::of(old_entries.into_iter().flatten());
+            let every = Rules::of_project_wide(old, kind);
             let mut set: BTreeSet<String> = rules.patterns.iter().map(|(p, _)| p.to_string()).collect();
             if !prune {
                 set.extend(rules.literals.iter().map(|l| l.to_string()));
             }
             if let Some(items) = seen.get(&(recipe.clone(), kind)) {
                 // A `*` in an observed spelling would be read back as a pattern: never written.
-                set.extend(items.iter().filter(|i| !i.contains('*') && !rules.patterns.iter().any(|(_, f)| f.matches(i))).cloned());
+                set.extend(items.iter().filter(|i| !i.contains('*') && !every.accepts(i) && !rules.patterns.iter().any(|(_, f)| f.matches(i))).cloned());
             }
             let kinds = new.recipes.entry(recipe.clone()).or_default();
             if set.is_empty() {

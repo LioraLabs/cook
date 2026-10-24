@@ -287,3 +287,64 @@ fn an_empty_known_set_marks_nothing_stale_and_nothing_pruned() {
     assert!(apply(&mut r, &b).stale.is_empty());
     assert_eq!(regenerate(&b, &r, true), b);
 }
+
+const EVERY: &str = r#"{"version":1,"recipes":{"*":{"read":["/etc/hosts","/usr/lib/**"],"env":["CI"]},"a":{"read":["own"]}}}"#;
+
+#[test]
+fn the_project_wide_recipe_accepts_literals_and_patterns_for_every_recipe() {
+    let mut r = report(
+        &["a", "b"],
+        vec![],
+        vec![
+            finding("a", FindingKind::Read, "x", &["/etc/hosts", "own", "/usr/lib/x/y.so", "keep"]),
+            finding("b", FindingKind::Read, "x", &["/etc/hosts", "/usr/lib/z", "own"]),
+            finding("b", FindingKind::Env, "CI", &[]),
+            finding("b", FindingKind::Absent, "/etc/hosts", &["/etc/hosts"]),
+        ],
+    );
+    let rat = apply(&mut r, &base(EVERY));
+    assert_eq!(rat.accepted, 6);
+    let left: Vec<_> = r.findings.iter().map(|f| (f.recipe.as_str(), f.kind.as_str(), f.paths.clone())).collect();
+    assert_eq!(left, [("a", "read", vec!["keep".to_string()]), ("b", "read", vec!["own".to_string()]), ("b", "absent", vec!["/etc/hosts".to_string()])]);
+}
+
+#[test]
+fn regenerate_writes_nothing_the_project_wide_recipe_accepts_and_nothing_into_it() {
+    let old = base(EVERY);
+    let r = report(&["a", "b", "*"], vec![unit("a", "traced"), unit("b", "traced")], vec![finding("b", FindingKind::Read, "x", &["/etc/hosts", "/usr/lib/q", "/opt/n", "own"]), finding("*", FindingKind::Read, "x", &["/opt/m"])]);
+    let new = regenerate(&old, &r, false);
+    assert_eq!(lits(&new, "b", "read"), ["/opt/n", "own"]);
+    assert_eq!(new.recipes["*"], old.recipes["*"]);
+    assert_eq!(new.recipes["a"], old.recipes["a"], "own literal survives and nothing global is added");
+    assert_eq!(regenerate(&new, &r, false), new);
+    let pruned = regenerate(&old, &r, true);
+    assert_eq!(pruned.recipes["*"], old.recipes["*"]);
+    assert_eq!(lits(&pruned, "b", "read"), ["/opt/n", "own"]);
+}
+
+#[test]
+fn the_project_wide_recipe_survives_prune_and_is_never_stale() {
+    let old = base(EVERY);
+    // Registered recipes only; "*" is not one, and it matches nothing this run saw.
+    let r = known(report(&["a"], vec![unit("a", "traced")], vec![finding("a", FindingKind::Read, "x", &["own"])]), &["a"]);
+    assert_eq!(regenerate(&old, &r, true), old);
+    let mut r = r;
+    assert!(apply(&mut r, &old).stale.is_empty());
+    let mut r = known(report(&["a"], vec![], vec![]), &["a"]);
+    assert!(apply(&mut r, &old).stale.iter().all(|s| s.recipe != "*"));
+}
+
+#[test]
+fn a_handback_must_carry_the_project_wide_recipe_literals_included() {
+    let old = base(EVERY);
+    let same = old.render();
+    assert!(Baseline::from_handback(&old, same.as_bytes()).is_ok());
+    for bad in [
+        r#"{"version":1,"recipes":{"*":{"read":["/usr/lib/**"],"env":["CI"]},"a":{"read":["own"]}}}"#,
+        r#"{"version":1,"recipes":{"*":{"read":["/etc/hosts","/usr/lib/**","/etc/shadow"],"env":["CI"]}}}"#,
+        r#"{"version":1,"recipes":{"a":{"read":["own"]}}}"#,
+    ] {
+        assert!(Baseline::from_handback(&old, bad.as_bytes()).is_err(), "{bad}");
+    }
+    assert!(Baseline::from_handback(&Baseline::default(), EVERY.as_bytes()).is_err(), "a run cannot invent the policy set");
+}
