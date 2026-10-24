@@ -1046,25 +1046,11 @@ fn shared_artifacts_present(
     if meta.output_paths.is_empty() {
         return None;
     }
-    // COOK-278: for glob-output units the declared paths are raw patterns, not
-    // the concrete names the publish path keyed its artifacts under — probing
-    // them reports a false SharedMiss. When the key's determinant manifest is
-    // present, probe its recorded concrete output list (files, implicit
-    // depfile, empty dirs — publish index order) instead.
-    let manifest_outputs: Option<Vec<String>> = cache_ctx
-        .backend
-        .get_manifest(&cloud_k)
-        .ok()
-        .flatten()
-        .and_then(|m| {
-            let depfile = meta.discovered_inputs.as_ref().map(|di| di.from.as_str());
-            let declared: Vec<&str> = meta.output_paths.iter().map(String::as_str).collect();
-            cook_cache::manifest_outputs(&cloud_k, &m, depfile, &declared)
-        });
-    let probe_paths: &[String] = match &manifest_outputs {
-        Some(list) => list,
-        None => &meta.output_paths,
-    };
+    // The one decision the fetch makes (manifest list, else the declared
+    // list for an all-literal depfile-less unit, else a miss).
+    let declared: Vec<&str> = meta.output_paths.iter().map(String::as_str).collect();
+    let depfile = meta.discovered_inputs.as_ref().map(|di| di.from.as_str());
+    let (probe_paths, _) = cook_cache::restore_list(cache_ctx.backend.as_ref(), &cloud_k, &declared, &declared, depfile)?;
     let mut hashes = BTreeMap::new();
     for (idx, path) in probe_paths.iter().enumerate() {
         let artifact_k = cook_cache::artifact_key(&cloud_k, idx as u32, path);

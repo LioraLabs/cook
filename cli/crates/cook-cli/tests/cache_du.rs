@@ -131,8 +131,8 @@ recipe other
 /// characters, summing `fs::metadata().len()`. This is a plain directory
 /// scan wholly separate from `enumerate`'s own logic — the genuine
 /// cross-check the task wants, not a restatement of the implementation.
-/// `.meta.json`, `.provenance.json`, and `.tmp` sidecars are all excluded
-/// because none of them are exactly 62 lowercase-hex characters.
+/// `.meta.json` and `.tmp` sidecars are excluded, as is a `.provenance.json`
+/// beside a blob; one with no blob beside it is a manifest object and counts.
 fn stat_walk_store(cache_dir: &Path) -> (u64, usize) {
     let mut total_bytes: u64 = 0;
     let mut count: usize = 0;
@@ -141,9 +141,12 @@ fn stat_walk_store(cache_dir: &Path) -> (u64, usize) {
             continue;
         }
         let name = entry.file_name().to_string_lossy();
-        let is_blob = name.len() == 62
-            && name.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
-        if !is_blob {
+        let is_hex = |n: &str| n.len() == 62 && n.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+        // A unit's determinant manifest with no blob beside it is an object of its own.
+        let is_lone_manifest = name.strip_suffix(".provenance.json").is_some_and(|stem| {
+            is_hex(stem) && !entry.path().with_file_name(stem).exists()
+        });
+        if !is_hex(&name) && !is_lone_manifest {
             continue;
         }
         count += 1;

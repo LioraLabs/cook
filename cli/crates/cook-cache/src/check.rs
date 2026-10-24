@@ -996,12 +996,18 @@ pub fn fetch_observation(
 /// concrete names, and content-dependent filenames (Next.js chunk hashes)
 /// make those wrong for the candidate key being probed. When the candidate
 /// key's determinant manifest is present, its recorded `output_paths` (plus
-/// the implicit depfile and any recorded empty dirs) are restored instead;
-/// the caller list is only a fallback for stores written before the
-/// determinant manifest existed. This also lifts the old "glob outputs cannot
-/// cold-fetch" limitation: raw patterns in `output_paths` simply never match
-/// an artifact, but the manifest-driven list does. A manifest listing anything
+/// the implicit depfile and any recorded empty dirs) are restored instead.
+/// This also lifts the old "glob outputs cannot cold-fetch" limitation: raw
+/// patterns in `output_paths` simply never match an artifact, but the
+/// manifest-driven list does. A manifest listing anything
 /// `ctx.declared_outputs` does not cover is read as absent.
+///
+/// The caller's list is the fallback when the manifest is absent: a manifest
+/// put that failed (a 413 on an oversized manifest included), a server
+/// without the manifest route (a 404 reads as no manifest), or eviction. It
+/// is taken only for a unit whose declared outputs are all literal paths and
+/// which has no depfile, because only then does the declaration fix the output
+/// set; any other unit's candidate is a miss ([`restore_list`]).
 #[allow(clippy::too_many_arguments)]
 pub fn fetch_by_key(
     ctx: &RestoreCtx,
@@ -1077,18 +1083,12 @@ pub fn fetch_by_key(
             seal_contribution,
             sorted_input_content_hashes: &full_hashes,
         });
-        // COOK-278: prefer the candidate key's own recorded output list over
-        // the caller's (possibly stale) one. Index order mirrors publish:
-        // files, implicit depfile, empty dirs.
         let depfile = discovered_inputs.map(|di| di.from.as_str());
-        let (restore_list, observation): (Vec<String>, Option<_>) =
-            match ctx.backend.get_manifest(&cloud_k).ok().flatten() {
-                Some(m) => match manifest_outputs(&cloud_k, &m, depfile, ctx.declared_outputs) {
-                    Some(list) => (list, m.observation),
-                    None => (output_paths.iter().map(|s| (*s).to_string()).collect(), None),
-                },
-                None => (output_paths.iter().map(|s| (*s).to_string()).collect(), None),
-            };
+        let Some((restore_list, observation)) =
+            restore_list(ctx.backend, &cloud_k, ctx.declared_outputs, output_paths, depfile)
+        else {
+            continue;
+        };
         if restore_all(ctx, &cloud_k, &restore_list, working_dir) {
             return Some(FetchOutcome {
                 restored_outputs: restore_list,
@@ -1099,6 +1099,31 @@ pub fn fetch_by_key(
         }
     }
     None
+}
+
+/// The list of outputs to restore for one candidate key, and the observation
+/// its manifest carries. The one place this is decided, for the fetch and for
+/// `cook why` alike:
+/// 1. a usable manifest's list ([`manifest_outputs`]);
+/// 2. otherwise (manifest absent, or rejected as forged) the caller's list,
+///    but only when every DECLARED output is a literal path and the unit has
+///    no depfile — only then does the declaration fix the output set;
+/// 3. otherwise `None`: the candidate is a miss. The caller's list is the last
+///    run's names, and the implicit depfile and empty dirs are not in it.
+pub fn restore_list(
+    backend: &dyn crate::cas_backend::CacheBackend,
+    key: &crate::cas_backend::CloudKey,
+    declared_outputs: &[&str],
+    caller_outputs: &[&str],
+    depfile: Option<&str>,
+) -> Option<(Vec<String>, Option<cook_contracts::cache::observation::Observation>)> {
+    if let Some(m) = backend.get_manifest(key).ok().flatten()
+        && let Some(list) = manifest_outputs(key, &m, depfile, declared_outputs)
+    {
+        return Some((list, m.observation));
+    }
+    let fixed = depfile.is_none() && !declared_outputs.iter().any(|s| cook_contracts::pathlaw::is_terminal_output(s));
+    fixed.then(|| (caller_outputs.iter().map(|s| (*s).to_string()).collect(), None))
 }
 
 /// The outputs a key's determinant manifest says to restore, in publish index

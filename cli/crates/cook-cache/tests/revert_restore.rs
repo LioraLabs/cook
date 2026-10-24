@@ -248,7 +248,8 @@ fn revert_restores_older_discovered_set() {
 }
 
 /// Format compatibility: a store written by a pre-COOK-278 binary has only
-/// the v1 single-set manifest. `read_discovered_input_sets` must surface it
+/// the v1 single-set discovered-inputs manifest (its outputs' manifest is
+/// the current one). `read_discovered_input_sets` must surface it
 /// as the sole candidate, and `fetch_by_key` must recover through it.
 #[test]
 fn v1_single_set_manifest_still_recovers() {
@@ -270,6 +271,8 @@ fn v1_single_set_manifest_still_recovers() {
     );
     put_artifact(&backend, &full_key, 0, "out.txt", b"ORIG");
     put_artifact(&backend, &full_key, 1, "deps.d", DEPFILE_BYTES);
+    // A depfile unit's output list comes from the full key's manifest alone.
+    put_determinant_manifest(&backend, &full_key, vec!["out.txt".to_string()]);
 
     assert_eq!(
         read_discovered_input_sets(&backend, &declared_key),
@@ -283,8 +286,6 @@ fn v1_single_set_manifest_still_recovers() {
     std::fs::write(wd.join("header.h"), HEADER_ORIG).unwrap();
 
     let ctx = RestoreCtx { backend: &backend, recipe_namespace: RECIPE_NS, declared_outputs: &["out.txt"] };
-    // No determinant manifest seeded → falls back to the caller's output
-    // list, exactly the pre-COOK-278 behaviour.
     let outcome = fetch_by_key(
         &ctx,
         CMD_HASH,

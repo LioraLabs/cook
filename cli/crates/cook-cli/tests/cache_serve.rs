@@ -388,6 +388,79 @@ fn a_local_hit_backfills_the_manifest_so_another_checkout_gets_the_verdict() {
     assert!(log.contains("PUT /v1/manifests/"), "a manifest PUT reached the server:\n{log}");
 }
 
+/// A producing unit whose declared output is a plain file.
+const CP_UNIT: &str = "recipe build\n    cook.add_unit({\n        name = \"build-step\",\n        inputs = {\"src/in.txt\"},\n        outputs = {\"out.txt\"},\n        command = \"cp src/in.txt out.txt && echo ran >> build.runlog\",\n    })\n";
+
+/// Age every manifest in `store` by two days, then sweep with the real binary beside the live server.
+fn gc_aged_manifests(tmp: &TempDir, store: &std::path::Path) {
+    let old = std::time::SystemTime::now() - Duration::from_secs(2 * 86_400);
+    for m in manifests_in(store) {
+        std::fs::File::open(&m).unwrap().set_times(std::fs::FileTimes::new().set_modified(old)).unwrap();
+    }
+    let blobs = |s: &std::path::Path| {
+        walkdir::WalkDir::new(s)
+            .into_iter()
+            .flatten()
+            .filter(|e| e.file_type().is_file() && !e.file_name().to_string_lossy().contains('.') && e.file_name() != "lock")
+            .count()
+    };
+    let before = blobs(store);
+    let out = cook(tmp).args(["cache", "gc", "--older-than", "1d", "--store"]).arg(store).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert!(manifests_in(store).is_empty(), "gc evicts the aged manifests");
+    assert_eq!(blobs(store), before, "only the manifests went; the artifact blobs remain");
+    assert!(before > 0, "the producer's output blob is in the store");
+}
+
+#[test]
+fn an_evicted_manifest_makes_the_test_unit_miss_never_pass() {
+    let tmp = TempDir::new().unwrap();
+    let (_served, addr, _log) = start(&tmp);
+    let a = checkout(&tmp, "a", &addr, TEST_UNIT, true);
+    run_in(&tmp, &a, &["test"]);
+    assert!(!manifests_in(&tmp.path().join("store")).is_empty(), "A published a manifest");
+    gc_aged_manifests(&tmp, &tmp.path().join("store"));
+
+    let b = checkout(&tmp, "b", &addr, TEST_UNIT, true);
+    run_in(&tmp, &b, &["test"]);
+    assert_eq!(runs(&b, "t.runlog"), 1, "without the verdict B runs the body: a miss, not a replayed pass");
+}
+
+#[test]
+fn an_evicted_manifest_leaves_a_producer_its_declared_outputs() {
+    let tmp = TempDir::new().unwrap();
+    let (_served, addr, _log) = start(&tmp);
+    let a = checkout(&tmp, "a", &addr, CP_UNIT, true);
+    run_in(&tmp, &a, &["build"]);
+    gc_aged_manifests(&tmp, &tmp.path().join("store"));
+
+    let b = checkout(&tmp, "b", &addr, CP_UNIT, true);
+    run_in(&tmp, &b, &["build"]);
+    assert_eq!(std::fs::read_to_string(b.join("out.txt")).unwrap(), "src-content\n");
+    assert_eq!(runs(&b, "build.runlog"), 0, "B restores the declared outputs, never runs the body");
+}
+
+/// A glob-output unit: `dist/b.js` exists only while the input says v1.
+const GLOB_UNIT: &str = "recipe build\n    cook.add_unit({\n        name = \"build-step\",\n        inputs = {\"src/in.txt\"},\n        outputs = {\"dist/*.js\"},\n        command = \"rm -rf dist && mkdir -p dist && echo a > dist/a.js && if grep -q v1 src/in.txt; then echo b > dist/b.js; fi && echo ran >> build.runlog\",\n    })\n";
+
+#[test]
+fn an_evicted_manifest_makes_a_reverted_glob_unit_miss_never_restore_the_last_runs_names() {
+    let tmp = TempDir::new().unwrap();
+    let (_served, addr, _log) = start(&tmp);
+    let a = checkout(&tmp, "a", &addr, GLOB_UNIT, true);
+    std::fs::write(a.join("src/in.txt"), "v1\n").unwrap();
+    run_in(&tmp, &a, &["build"]);
+    std::fs::write(a.join("src/in.txt"), "v2\n").unwrap();
+    run_in(&tmp, &a, &["build"]); // the local entry now lists only dist/a.js
+    assert!(!a.join("dist/b.js").exists());
+    gc_aged_manifests(&tmp, &tmp.path().join("store"));
+
+    std::fs::write(a.join("src/in.txt"), "v1\n").unwrap();
+    run_in(&tmp, &a, &["build"]);
+    assert!(a.join("dist/b.js").is_file(), "the revert must not be served from the last run's names");
+    assert_eq!(runs(&a, "build.runlog"), 3, "without the manifest the glob unit misses and rebuilds");
+}
+
 // ── Links in a directory output ──────────────────────────────────────────────
 
 /// A unit owning the directory `out/`.

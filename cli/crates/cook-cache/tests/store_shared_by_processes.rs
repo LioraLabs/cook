@@ -167,13 +167,17 @@ fn wait_bounded(c: &mut Child, n: usize) -> std::process::ExitStatus {
     }
 }
 
-/// Every shard dir holds only 62-hex blobs with their sidecars, and the lock file.
+/// Every shard dir holds only 62-hex blobs with their sidecars (a manifest may sit
+/// alone), and the lock file.
 fn assert_tidy(store: &Path) {
     for shard in fs::read_dir(store).unwrap().flatten() {
         for f in fs::read_dir(shard.path()).unwrap().flatten() {
             let name = f.file_name().into_string().unwrap();
+            let is_hex62 = |s: &str| s.len() == 62 && s.bytes().all(|b| b.is_ascii_hexdigit());
             let stem = name.strip_suffix(".meta.json").unwrap_or(&name);
-            let ok = name == "lock" || (stem.len() == 62 && stem.bytes().all(|b| b.is_ascii_hexdigit()));
+            let ok = name == "lock"
+                || is_hex62(stem)
+                || name.strip_suffix(".provenance.json").is_some_and(is_hex62);
             assert!(ok, "stray file in the store: {}", f.path().display());
             if name.ends_with(".meta.json") {
                 assert!(
@@ -290,6 +294,47 @@ fn manifests_from_every_process_all_land_whole() {
     assert!((0..PROCS).any(|i| got == manifest(i)), "a manifest nobody wrote");
 }
 
+fn provenance_files(store: &Path) -> usize {
+    fs::read_dir(store)
+        .unwrap()
+        .flatten()
+        .flat_map(|shard| fs::read_dir(shard.path()).unwrap().flatten())
+        .filter(|f| f.file_name().to_string_lossy().ends_with(".provenance.json"))
+        .count()
+}
+
+#[test]
+fn gc_beside_manifest_writers_leaves_every_manifest_whole() {
+    let mut run = Run::new();
+    for idx in 0..PROCS {
+        run.spawn("manifest-many", idx, KEYS);
+    }
+    run.spawn("gc", 0, KEYS);
+    run.spawn("manifest-reader", 0, KEYS);
+    run.go();
+    run.wait_first(PROCS);
+    run.stop_rest();
+
+    for idx in 0..PROCS {
+        let lines = run.results("manifest-many", idx);
+        assert!(lines.iter().all(|l| l == "ok"), "process {idx}: {lines:?}");
+    }
+    let seen = run.results("manifest-reader", 0);
+    assert!(seen.is_empty(), "reader saw: {seen:?}");
+    assert_tidy(run.store.path());
+
+    // gc beside the writers may have kept or dropped any one; a last sweep drops the rest.
+    let backend = run.backend();
+    let present = provenance_files(run.store.path());
+    let found = backend.enumerate().unwrap();
+    assert_eq!(found.len(), present, "every manifest-only key is listed");
+    let plan = plan_eviction(&found, &EvictPolicy::manual(Some(0), None), u64::MAX / 2);
+    let outcome = backend.apply_eviction(&plan).unwrap();
+    assert_eq!(outcome.objects, present);
+    assert_eq!(provenance_files(run.store.path()), 0, "a manifest outlived the sweep");
+    assert_tidy(run.store.path());
+}
+
 // ─── child side ─────────────────────────────────────────────────────────
 
 fn wait_for(path: &Path) {
@@ -335,6 +380,15 @@ fn child_role() {
                 });
             }
         }
+        "manifest-many" => {
+            let m = manifest(idx);
+            for i in 0..keys {
+                out.push(match backend.put_manifest(&key(i), &m) {
+                    Ok(()) => "ok".to_string(),
+                    Err(e) => format!("{e:?}"),
+                });
+            }
+        }
         "gc" => {
             while !stopped() {
                 let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
@@ -360,6 +414,19 @@ fn child_role() {
                                 Err(e) => out.push(format!("key {i}: read: {e}")),
                             }
                         }
+                        Err(e) => out.push(format!("key {i}: get: {e:?}")),
+                    }
+                }
+            }
+        }
+        // Problems only: whatever is read is whole and some writer's.
+        "manifest-reader" => {
+            while !stopped() {
+                for i in 0..keys {
+                    match backend.get_manifest(&key(i)) {
+                        Ok(None) => {}
+                        Ok(Some(m)) if (0..PROCS).any(|w| m == manifest(w)) => {}
+                        Ok(Some(_)) => out.push(format!("key {i}: a manifest nobody wrote")),
                         Err(e) => out.push(format!("key {i}: get: {e:?}")),
                     }
                 }

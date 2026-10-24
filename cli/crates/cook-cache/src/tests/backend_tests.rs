@@ -984,9 +984,13 @@ fn apply_eviction_removes_only_the_planned_keys() {
     assert_eq!(plan.victims.len(), 1, "plan must name exactly one victim");
     assert_eq!(plan.victims[0].key, victim_key);
 
+    // The victim's blob and its manifest are both freed, and both counted.
+    let on_disk = |p: std::path::PathBuf| std::fs::metadata(p).expect("stat").len();
+    let expected = on_disk(backend.path_for(&victim_key))
+        + on_disk(backend.path_for(&victim_key).with_extension("provenance.json"));
     let outcome = backend.apply_eviction(&plan).expect("apply_eviction");
     assert_eq!(outcome.objects, 1);
-    assert_eq!(outcome.bytes, 10);
+    assert_eq!(outcome.bytes, expected);
 
     // Victim: all three files gone.
     let victim_blob = backend.path_for(&victim_key);
@@ -1020,9 +1024,9 @@ fn apply_eviction_tolerates_a_victim_that_vanished_mid_sweep() {
     // Simulate a concurrent sweep already having removed the blob, leaving
     // the sidecars stranded (a half-removed object).
     std::fs::remove_file(&blob).expect("simulate concurrent removal");
+    std::fs::remove_file(blob.with_extension("provenance.json")).expect("simulate manifest removal");
     assert!(!blob.exists());
     assert!(blob.with_extension("meta.json").exists());
-    assert!(blob.with_extension("provenance.json").exists());
 
     let plan = EvictPlan {
         victims: vec![EvictCandidate {
@@ -1050,9 +1054,92 @@ fn apply_eviction_tolerates_a_victim_that_vanished_mid_sweep() {
         "a vanished-blob victim must not double-count freed bytes"
     );
 
-    // Stranded sidecars are cleaned up anyway.
+    // The stranded sidecar is cleaned up anyway.
     assert!(!blob.with_extension("meta.json").exists());
-    assert!(!blob.with_extension("provenance.json").exists());
+}
+
+/// A manifest with no blob beside it is a victim of its own: removing it is
+/// counted, with its size.
+#[test]
+fn apply_eviction_removes_a_manifest_only_victim_and_counts_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let backend = LocalBackend::new(dir.path().to_path_buf());
+    let k = key(0xB1);
+    backend.put_manifest(&k, &sample_manifest()).expect("put_manifest");
+    let manifest = backend.path_for(&k).with_extension("provenance.json");
+    let size = std::fs::metadata(&manifest).expect("stat").len();
+
+    let victim = backend
+        .enumerate()
+        .expect("enumerate")
+        .into_iter()
+        .find(|c| c.key == k)
+        .expect("manifest-only key is enumerated");
+    let plan = EvictPlan {
+        victims: vec![victim],
+        freed_bytes: size,
+        total_before: size,
+        total_after: 0,
+        count_before: 1,
+    };
+
+    let outcome = backend.apply_eviction(&plan).expect("apply_eviction");
+    assert_eq!(outcome.objects, 1);
+    assert_eq!(outcome.bytes, size);
+    assert!(!manifest.exists(), "the manifest must be gone");
+}
+
+/// A blob that cannot be removed is not freed: only the manifest's bytes count.
+#[test]
+fn apply_eviction_counts_only_what_this_call_removed() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let backend = LocalBackend::new(dir.path().to_path_buf());
+    let k = key(0xB3);
+    backend.put_manifest(&k, &sample_manifest()).expect("put_manifest");
+    let manifest = backend.path_for(&k).with_extension("provenance.json");
+    let manifest_len = std::fs::metadata(&manifest).expect("stat").len();
+    // A non-empty directory at the blob path makes `remove_file` fail on any uid.
+    let blob = backend.path_for(&k);
+    std::fs::create_dir_all(blob.join("inner")).expect("mkdir");
+
+    let plan = EvictPlan {
+        victims: vec![EvictCandidate {
+            key: k,
+            size: 1_000_000,
+            last_access: 0,
+            kind: None,
+            recipe_namespace: String::new(),
+        }],
+        freed_bytes: 1_000_000,
+        total_before: 1_000_000,
+        total_after: 0,
+        count_before: 1,
+    };
+    let outcome = backend.apply_eviction(&plan).expect("apply_eviction");
+    assert_eq!(outcome.objects, 1);
+    assert_eq!(outcome.bytes, manifest_len);
+    assert!(!manifest.exists());
+    assert!(blob.exists(), "the blob's removal failed, so it is still there");
+}
+
+/// `get_manifest` is on the hit path, so a read ages the manifest like the
+/// artifacts it serves; a miss touches nothing.
+#[test]
+fn get_manifest_advances_the_manifest_mtime_on_a_hit() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let backend = LocalBackend::new(dir.path().to_path_buf());
+    let k = key(0xB2);
+    backend.put_manifest(&k, &sample_manifest()).expect("put_manifest");
+    let manifest = backend.path_for(&k).with_extension("provenance.json");
+    filetime::set_file_mtime(&manifest, OLD_STAMP).expect("backdate manifest");
+
+    assert!(backend.get_manifest(&k).expect("get_manifest").is_some());
+    assert!(mtime_of(&manifest) > OLD_STAMP, "a hit must advance the mtime");
+
+    std::fs::write(&manifest, b"not json").expect("corrupt");
+    filetime::set_file_mtime(&manifest, OLD_STAMP).expect("backdate manifest");
+    assert!(backend.get_manifest(&k).expect("get_manifest").is_none());
+    assert_eq!(mtime_of(&manifest), OLD_STAMP, "a malformed manifest is not touched");
 }
 
 /// An empty plan is a no-op: zero objects, zero bytes, no error.

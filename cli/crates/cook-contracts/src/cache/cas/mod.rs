@@ -125,11 +125,15 @@ pub mod artifact_kind {
     /// A recorded unit observation. Deliberately NOT sweep-exempt: it is the
     /// kind a size sweep drops first.
     pub const OBSERVATION: &str = "observation";
-
+    /// `LocalBackend::enumerate`'s label for a determinant manifest stored with
+    /// no blob beside it. Never a legitimate `ArtifactMeta.kind`. Evictable, not
+    /// size-sweep exempt: losing one turns an observing unit into a miss and a
+    /// producer into a declared-outputs restore; it strands nothing.
+    pub const MANIFEST: &str = "manifest";
     /// Every kind, so a new one cannot be added without a decision about it.
     ///
     /// A module of bare constants has no exhaustiveness — nothing would notice
-    /// an eighth kind that no reader classifies. `evict`'s tests partition
+    /// a new kind that no reader classifies. `evict`'s tests partition
     /// this list into sweep-exempt and deliberately-not, and a member that is
     /// in neither fails them.
     pub const ALL: &[&str] = &[
@@ -140,27 +144,32 @@ pub mod artifact_kind {
         DISCOVERED_INPUT_SETS,
         MODULE_INPUT_SETS,
         OBSERVATION,
+        MANIFEST,
     ];
 }
 
-/// One blob discovered by `LocalBackend::enumerate()` (COOK-232): everything
+/// One blob, or one blob-less determinant manifest, discovered by
+/// `LocalBackend::enumerate()` (COOK-232): everything
 /// a CAS-hygiene consumer (`cook cache du`, `cook cache gc` / COOK-234) needs
 /// to size up and evict a single artifact, WITHOUT trusting anything the
 /// original caller claimed about it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EvictCandidate {
-    /// The artifact's 32-byte content-addressed key.
+    /// The artifact's 32-byte content-addressed key (a manifest candidate's is
+    /// the key its sidecar sits at).
     pub key: CloudKey,
-    /// On-disk blob size from `fs::metadata().len()`. NOT `ArtifactMeta.size_bytes`,
+    /// On-disk blob size (the manifest file's, for a manifest candidate) from `fs::metadata().len()`. NOT `ArtifactMeta.size_bytes`,
     /// which is caller-set and untrusted (see `LocalBackend::put`'s handling of
     /// `size_bytes` in the `cook-cache` crate: it's left as whatever the caller
     /// passed in, not recomputed from the written bytes).
     pub size: u64,
-    /// Blob mtime as Unix seconds. Touch-on-read (COOK-233) keeps this current;
+    /// Blob (or manifest) mtime as Unix seconds. Touch-on-read (COOK-233) keeps
+    /// this current for both;
     /// 0 when the platform mtime is unavailable.
     pub last_access: u64,
     /// `ArtifactMeta.kind` verbatim. `None` = legacy file artifact, or an orphan
     /// blob with no readable sidecar. Both are evictable, so the conflation is safe.
+    /// A manifest with no blob beside it is `Some(artifact_kind::MANIFEST)`.
     pub kind: Option<String>,
     /// `ArtifactMeta.recipe_namespace` verbatim, `""` when no sidecar was readable.
     /// Reporting only (milestone D3: attribution is a label, never a deletion key).

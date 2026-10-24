@@ -243,6 +243,9 @@ fn assert_object_present(cache_dir: &Path, key: &[u8; 32], label: &str) {
     );
 }
 
+/// The length of the `.provenance.json` that `seed_object` puts beside each blob.
+const SEEDED_MANIFEST_BYTES: u64 = 2;
+
 /// Seed one CAS object directly on disk: blob with `size` bytes of filler
 /// content, a `.meta.json` sidecar serialized from a real `ArtifactMeta`
 /// (never hand-written), and an (unparsed by gc) `.provenance.json`
@@ -285,6 +288,7 @@ fn seed_object(
     )
     .unwrap();
     fs::write(blob_path.with_extension("provenance.json"), b"{}").unwrap();
+    assert_eq!(SEEDED_MANIFEST_BYTES, 2);
 
     let mtime = SystemTime::now()
         .checked_sub(Duration::from_secs(age_secs))
@@ -406,7 +410,9 @@ fn max_size_evicts_exactly_the_lru_tail_of_files() {
     // the running total under target.
     //   after evicting 3: running_total = total_before - 3,000,000 <= target (stop)
     //   before evicting the 3rd: running_total = total_before - 2,000,000 > target (continue)
-    let gc = fx.run(&["cache", "gc", "--max-size", "2050000"]);
+    // Each seeded object also carries its 2-byte manifest, which counts.
+    let target = (2_050_000 + SEEDED_MANIFEST_BYTES * (5 + exempt_count as u64)).to_string();
+    let gc = fx.run(&["cache", "gc", "--max-size", &target]);
     assert!(gc.status.success(), "gc must exit 0: {gc:?}");
     let text = String::from_utf8(gc.stdout).unwrap();
 
@@ -573,7 +579,9 @@ fn dry_run_frees_nothing_and_its_projection_matches_a_real_run() {
 
     // target = 2,000,000: evicts exactly the 2 oldest files (frees
     // 2,000,000, leaving running_total at 2,000,000 <= target).
-    let dry = fx.run(&["cache", "gc", "--max-size", "2000000", "--dry-run"]);
+    // Each seeded object also carries its 2-byte manifest, which counts.
+    let target = (2_000_000 + SEEDED_MANIFEST_BYTES * 2).to_string();
+    let dry = fx.run(&["cache", "gc", "--max-size", &target, "--dry-run"]);
     assert!(dry.status.success(), "dry-run gc must exit 0: {dry:?}");
     let dry_text = String::from_utf8(dry.stdout).unwrap();
     assert_store_line(&dry_text, &fx.cache_dir);
@@ -591,7 +599,7 @@ fn dry_run_frees_nothing_and_its_projection_matches_a_real_run() {
 
     // The identical command, without --dry-run: the real freed numbers
     // must equal the dry-run's projection exactly.
-    let real = fx.run(&["cache", "gc", "--max-size", "2000000"]);
+    let real = fx.run(&["cache", "gc", "--max-size", &target]);
     assert!(real.status.success(), "real gc must exit 0: {real:?}");
     let real_text = String::from_utf8(real.stdout).unwrap();
     assert_store_line(&real_text, &fx.cache_dir);
@@ -736,4 +744,79 @@ fn a_store_flag_that_is_not_a_directory_is_refused_and_creates_nothing() {
     }
     assert!(!missing.exists(), "a refused sweep creates nothing");
     assert_eq!(fs::read(&file).unwrap(), b"x");
+}
+
+// ---------------------------------------------------------------------------
+// manifests with no blob beside them (what `cook cache serve` stores)
+// ---------------------------------------------------------------------------
+
+/// A determinant manifest at a unit's key with no blob: `size` bytes, `age_secs` old.
+fn seed_manifest_only(cache_dir: &Path, counter: u32, size: u64, age_secs: u64) -> PathBuf {
+    let hex = to_hex(&key_from_counter(counter));
+    let shard = cache_dir.join(&hex[..2]);
+    fs::create_dir_all(&shard).unwrap();
+    let path = shard.join(format!("{}.provenance.json", &hex[2..]));
+    fs::write(&path, vec![b'm'; size as usize]).unwrap();
+    let mtime = SystemTime::now() - Duration::from_secs(age_secs);
+    fs::File::open(&path).unwrap().set_times(fs::FileTimes::new().set_modified(mtime)).unwrap();
+    path
+}
+
+#[test]
+fn du_counts_manifest_only_keys_and_gc_frees_them() {
+    let fx = Fixture::new();
+    let manifests: Vec<PathBuf> = (0..3).map(|i| seed_manifest_only(&fx.cache_dir, i, 2_000, 1000)).collect();
+    let blob = fx.seed(10, 1_000, 10, None, "/Cookfile::build");
+
+    assert!(fx.kinds_reported().contains("manifest"), "du must show a manifest row");
+    let du = String::from_utf8(fx.run(&["cache", "du"]).stdout).unwrap();
+    // Three manifests (2000 each) and one blob (1000) with its manifest.
+    let total = 3 * 2_000 + 1_000 + SEEDED_MANIFEST_BYTES;
+    assert!(du.contains(&format!("({total} bytes) across 4 objects")), "{du}");
+
+    let gc = fx.run(&["cache", "gc", "--max-size", "1500"]);
+    assert!(gc.status.success(), "{gc:?}");
+    let text = String::from_utf8(gc.stdout).unwrap();
+    assert_store_line(&text, &fx.cache_dir);
+    assert_eq!(parse_free_line(&text).0, 3, "{text}");
+    for m in &manifests {
+        assert!(!m.exists(), "manifest should be gone: {m:?}");
+    }
+    assert_object_present(&fx.cache_dir, &blob, "recent blob under the target");
+}
+
+#[test]
+fn gc_on_a_store_holding_one_big_manifest_frees_it() {
+    let tmp = TempDir::new().unwrap();
+    let store = tmp.path().join("served");
+    let manifest = seed_manifest_only(&store, 1, 5_000_000, 100);
+    let out = Command::new(cook_bin())
+        .args(["cache", "gc", "--max-size", "1", "--store"])
+        .arg(&store)
+        .env("XDG_CACHE_HOME", tmp.path().join("xdg"))
+        .current_dir(tmp.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(!text.contains("Nothing to evict."), "{text}");
+    assert_eq!(parse_free_line(&text), (1, "5.0 MB".to_string()), "{text}");
+    assert!(!manifest.exists());
+}
+
+#[test]
+fn a_big_manifest_beside_a_small_blob_is_counted_and_freed() {
+    let fx = Fixture::new();
+    let key = fx.seed(30, 1, 100, None, "/Cookfile::build");
+    let (blob, _, manifest) = object_paths(&fx.cache_dir, &key);
+    fs::write(&manifest, vec![b'm'; 4_000_000]).unwrap();
+
+    let du = String::from_utf8(fx.run(&["cache", "du"]).stdout).unwrap();
+    assert!(du.contains("(4000001 bytes) across 1 objects"), "{du}");
+
+    let gc = fx.run(&["cache", "gc", "--max-size", "1"]);
+    assert!(gc.status.success(), "{gc:?}");
+    let text = String::from_utf8(gc.stdout).unwrap();
+    assert_eq!(parse_free_line(&text), (1, "4.0 MB".to_string()), "{text}");
+    assert!(!blob.exists() && !manifest.exists());
 }

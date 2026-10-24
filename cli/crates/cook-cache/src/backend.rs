@@ -10,6 +10,7 @@ use std::fs::File;
 use std::io::{self, Cursor, Read, Write};
 use std::path::PathBuf;
 
+use cook_contracts::cache::cas::artifact_kind;
 use sha2::{Digest, Sha256};
 
 pub use crate::cas_backend::{
@@ -275,9 +276,10 @@ impl LocalBackend {
 /// COOK-233 — best-effort last-access bump on a CAS blob.
 ///
 /// LRU eviction (`cook cache gc`) needs to know when an entry was last
-/// used. The signal is the blob file's own mtime, restamped with a single
-/// `utimensat` per cache hit; "LRU order" is therefore ascending *blob*
-/// mtime. The rejected alternative was a `last_access` field inside
+/// used. The signal is the file's own mtime (a blob's, or a manifest's),
+/// restamped with a single `utimensat` per cache hit; "LRU order" is
+/// therefore ascending mtime of the blob or manifest. The rejected
+/// alternative was a `last_access` field inside
 /// `.meta.json` rewritten on every read, which puts write amplification on
 /// the hot read path.
 ///
@@ -319,10 +321,18 @@ impl From<PutError> for BackendError {
     }
 }
 
+/// The determinant manifest's file extension: the one place the name is decided.
+const MANIFEST_EXT: &str = "provenance.json";
+
+/// The 62-hex stem of a manifest file name, or `None` if `name` is not one.
+fn manifest_stem(name: &str) -> Option<&str> {
+    name.strip_suffix(MANIFEST_EXT)?.strip_suffix('.')
+}
+
 impl LocalBackend {
     /// `path_for` has no extension, so `with_extension` appends the sidecar's.
     fn manifest_path(&self, key: &CloudKey) -> PathBuf {
-        self.path_for(key).with_extension("provenance.json")
+        self.path_for(key).with_extension(MANIFEST_EXT)
     }
 
     /// Write the `provenance.json` sidecar for `key` (tmp + rename). The
@@ -350,7 +360,7 @@ impl LocalBackend {
         // The fixed temp name is private to whoever holds the shard lock.
         let _lock = self
             .lock_shard(key)
-            .map_err(|e| store_err("manifest".into(), e))?;
+            .map_err(|e| store_err(format!("lock shard for manifest {}", path.display()), e))?;
         std::fs::write(&tmp, &bytes)
             .map_err(|e| (e, format!("write manifest {}", tmp.display())))
             .and_then(|()| {
@@ -674,7 +684,11 @@ impl CacheBackend for LocalBackend {
         let path = self.manifest_path(key);
         match std::fs::read(&path) {
             Ok(b) => match serde_json::from_slice::<DeterminantManifest>(&b) {
-                Ok(m) => Ok(Some(m)),
+                Ok(m) => {
+                    // Ages with the artifacts it serves; a malformed one is not a hit.
+                    touch_on_read(&path);
+                    Ok(Some(m))
+                }
                 Err(e) => {
                     tracing::warn!(
                         "cache manifest: malformed sidecar at {} ({e}); treating as absent",
@@ -694,10 +708,10 @@ impl CacheBackend for LocalBackend {
 
 /// Exactly `len` lowercase hex characters — the shape used both for shard
 /// directory names (2) and blob file names (62). Anything else (uppercase,
-/// wrong length, non-hex) fails the predicate. This single predicate is what
-/// excludes `.meta.json`, `.provenance.json`, `.tmp`, and `.meta.json.tmp`
-/// sidecars from `LocalBackend::enumerate` — no extension-specific logic
-/// needed.
+/// wrong length, non-hex) fails the predicate. This is what excludes
+/// `.meta.json`, `.tmp`, and `.meta.json.tmp` sidecars from
+/// `LocalBackend::enumerate`; `enumerate` strips `.provenance.json` itself
+/// before applying it.
 fn is_lowercase_hex(s: &str, len: usize) -> bool {
     s.len() == len && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
@@ -707,7 +721,9 @@ fn is_lowercase_hex(s: &str, len: usize) -> bool {
 // non-adjacent to COOK-233's concurrent edits inside `get`/`get_with_meta`.
 impl LocalBackend {
     /// Walk the on-disk CAS at `{root}/{2 hex}/{62 hex}` and return one
-    /// `EvictCandidate` per blob found. Ordering is unspecified; callers
+    /// `EvictCandidate` per blob found, plus one per determinant manifest
+    /// (`{62 hex}.provenance.json`) with no blob beside it, labelled
+    /// `artifact_kind::MANIFEST`. Ordering is unspecified; callers
     /// that need a stable order (e.g. LRU eviction) must sort.
     ///
     /// Deliberately an **inherent** method, not a `CacheBackend` trait
@@ -768,11 +784,19 @@ impl LocalBackend {
                 let Some(file_name) = blob_os_name.to_str() else {
                     continue;
                 };
-                if !is_lowercase_hex(file_name, 62) {
+                // A manifest is listed only when no blob sits beside it: the
+                // blob's own candidate already removes the manifest.
+                let (stem, is_manifest) = match manifest_stem(file_name) {
+                    Some(stem) => (stem, true),
+                    None => (file_name, false),
+                };
+                if !is_lowercase_hex(stem, 62)
+                    || (is_manifest && shard_path.join(stem).symlink_metadata().is_ok())
+                {
                     continue;
                 }
 
-                let Ok(key_bytes) = hex::decode(format!("{shard_name}{file_name}")) else {
+                let Ok(key_bytes) = hex::decode(format!("{shard_name}{stem}")) else {
                     continue;
                 };
                 let Ok(key): Result<CloudKey, _> = key_bytes.try_into() else {
@@ -794,13 +818,30 @@ impl LocalBackend {
                         continue;
                     }
                 };
-                let size = metadata.len();
+                let mut size = metadata.len();
                 let last_access = metadata
                     .modified()
                     .ok()
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                     .map(|d| d.as_secs())
                     .unwrap_or(0);
+
+                // The manifest is untrusted and up to 4 MiB: it is sized and
+                // aged by its file, never parsed.
+                if is_manifest {
+                    out.push(EvictCandidate {
+                        key,
+                        size,
+                        last_access,
+                        kind: Some(artifact_kind::MANIFEST.to_string()),
+                        recipe_namespace: String::new(),
+                    });
+                    continue;
+                }
+
+                // A manifest beside this blob goes with it, so it is sized with it.
+                let beside = shard_path.join(format!("{file_name}.{MANIFEST_EXT}"));
+                size = size.saturating_add(beside.symlink_metadata().map_or(0, |m| m.len()));
 
                 // Sidecar read is best-effort: a missing or malformed
                 // `.meta.json` is NOT an error here. The bytes still occupy
@@ -849,20 +890,15 @@ impl LocalBackend {
     /// sweep; only the local, single-tenant filesystem backend is trusted to
     /// actually apply it.
     ///
-    /// Per victim: remove the blob with a single `remove_file` call and
-    /// count `size` toward the returned `EvictOutcome` only if THIS call
-    /// was the one that actually removed it (`Ok`). Stat-then-delete would
-    /// open a TOCTOU window: a concurrent sweep could remove the blob
-    /// between the stat and the delete, and this run would still count
-    /// `size`, double-counting the freed bytes across both sweeps — exactly
-    /// what this method must not do. Deriving "removed" from the delete's
-    /// own result closes that window, and also stops counting a blob whose
-    /// removal failed for some other reason (e.g. a permission error): the
-    /// bytes are still on disk, so they must not be reported as freed.
-    ///
-    /// The sidecars are removed unconditionally (best-effort), whether or
-    /// not the blob was present, so a half-removed object still gets
-    /// cleaned up.
+    /// Per victim, under its shard lock (which excludes writers and other
+    /// sweeps, so stat-then-remove is not a TOCTOU): stat the blob and the
+    /// manifest (no-follow), `remove_file` each, and add a file's length to
+    /// `bytes` only if THIS call's remove of it succeeded. `objects` grows by
+    /// one if either removal took. A file whose removal failed (e.g. a
+    /// permission error) is still on disk and is not reported as freed; a
+    /// manifest-only victim simply has no blob. The `.meta.json` sidecar is
+    /// removed best-effort and never counted. Nothing branches on the
+    /// victim's `kind`.
     ///
     /// Never returns `Err` for a per-object filesystem failure; every
     /// removal is best-effort, matching `delete`'s shape. The `BackendResult`
@@ -889,12 +925,14 @@ impl LocalBackend {
             let path = self.path_for(&victim.key);
             // Sidecar first (the commit point readers check), as in `delete`.
             let _ = std::fs::remove_file(path.with_extension("meta.json"));
-            let blob_removed = std::fs::remove_file(&path).is_ok();
-            let _ = std::fs::remove_file(self.manifest_path(&victim.key));
-
-            if blob_removed {
+            let freed = [path, self.manifest_path(&victim.key)].map(|file| {
+                let len = file.symlink_metadata().map_or(0, |m| m.len());
+                std::fs::remove_file(&file).is_ok().then_some(len)
+            });
+            if freed.iter().any(Option::is_some) {
                 outcome.objects += 1;
-                outcome.bytes = outcome.bytes.saturating_add(victim.size);
+                let bytes: u64 = freed.iter().flatten().sum();
+                outcome.bytes = outcome.bytes.saturating_add(bytes);
             }
         }
 

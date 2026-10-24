@@ -50,7 +50,7 @@ pub use cas_backend::{BackendConfig, BackendError, BackendResult, CacheBackend};
 pub use check::{
     FetchOutcome, RebuildReason, RebuildResult, RestoreCtx, fetch_by_key, fetch_observation,
     hash_env, hash_file, hash_input_paths, hash_reader, manifest_outputs, needs_rebuild_cook, no_link_on_the_way,
-    read_discovered_input_sets, read_module_input_sets, restorable, shared_observation,
+    read_discovered_input_sets, read_module_input_sets, restorable, restore_list, shared_observation,
     stat_mtime,
 };
 pub use cook_contracts::cache::cas::{

@@ -153,13 +153,10 @@ pub(crate) fn render(report: &DuReport, store: &Path, budget: Option<u64>) -> St
         return out;
     }
 
-    // Addition 2: `EvictCandidate.size` is the blob's own byte length —
-    // `.meta.json` / `.provenance.json` sidecars are real disk usage this
-    // total does not include. Say so, every time there's a nonzero total to
-    // qualify.
-    out.push_str(
-        "(artifact bytes only; .meta.json / .provenance.json sidecars are not counted)\n",
-    );
+    // Addition 2: `EvictCandidate.size` is a blob's or a stored manifest's own
+    // byte length — `.meta.json` sidecars are real disk usage this total does
+    // not include. Say so, every time there's a nonzero total to qualify.
+    out.push_str("(artifacts and stored manifests; .meta.json sidecars are not counted)\n");
 
     out.push('\n');
     out.push_str("By kind:\n");

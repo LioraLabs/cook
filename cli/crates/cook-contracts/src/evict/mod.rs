@@ -55,16 +55,17 @@
 //! them from the size sweep is nearly free. `older_than` is what keeps the
 //! exempt set bounded, since the age pass applies to every kind (above).
 //!
-//! ## Carry-forward note from COOK-233
+//! ## Determinant manifests
 //!
-//! `LocalBackend::get_manifest` does not touch, so an artifact consulted
-//! only through provenance lookups (`cook why`) still ages out as cold.
-//! That is correct for gc, not a design gap: a provenance read is a
-//! diagnostic, not a cache hit — the bytes were never reused, so evicting
-//! them costs one rebuild on next real use, exactly the LRU bargain.
-//! `delete` removes the `.provenance.json` sidecar alongside the blob, so
-//! `cook why` loses provenance for an object whose bytes are gone anyway —
-//! coherent, not a new gap.
+//! A manifest with no blob beside it is a candidate of its own, ranked by its
+//! mtime, which `LocalBackend::get_manifest` advances on a read. LRU ages a
+//! manifest and its unit's artifacts independently, so an orphan manifest
+//! lingers only until LRU reaches it. Evicting one turns that key into a miss
+//! for any unit whose output list the manifest alone determines (a glob or
+//! directory output, a discovered-inputs file); a unit whose declared outputs
+//! are all literal paths with no discovered-inputs file restores those
+//! declared outputs. A `cook why` read of a manifest counts as use:
+//! `get_manifest` advances its mtime.
 
 use std::collections::HashSet;
 use std::time::Duration;

@@ -120,8 +120,12 @@ fn manifest(k: &[u8; 32], output_paths: Vec<String>, empty_dir_outputs: Vec<Stri
 }
 
 /// A token holder puts the declared output plus one path the recipe never
-/// declared, and a manifest naming both. The manifest is read as absent: the
-/// declared output restores and nothing lands outside.
+/// declared, and a manifest naming both. Declared `["out.o", "**"]` the escape
+/// is covered by the wildcard, so only `restorable` can reject the manifest: the
+/// fetch is a miss and `out.o` (index 0) is not written, which a manifest
+/// wrongly accepted would have done before the escape failed. Declared
+/// `["out.o"]` the escape fails coverage; the manifest reads as absent and the
+/// declaration fixes the list, so `out.o` restores. Nothing lands outside.
 #[test]
 fn a_forged_remote_manifest_writes_nothing_outside_the_workspace() {
     let store = tempfile::tempdir().unwrap();
@@ -156,12 +160,15 @@ fn a_forged_remote_manifest_writes_nothing_outside_the_workspace() {
             };
             client.put_manifest(&k, &m).unwrap();
 
-            let ctx = RestoreCtx { backend: &client, recipe_namespace: NS, declared_outputs: &["out.o", "**"] };
-            // Declared as broadly as a unit can, so only the escape decides.
+            let wild = RestoreCtx { backend: &client, recipe_namespace: NS, declared_outputs: &["out.o", "**"] };
+            let wild_got = fetch_by_key(&wild, 1, 2, 3, &hashes, &["out.o"], &ws, None, false);
+            let wild_wrote = std::fs::read(ws.join("out.o")).is_ok();
+            let ctx = RestoreCtx { backend: &client, recipe_namespace: NS, declared_outputs: &["out.o"] };
             let got = fetch_by_key(&ctx, 1, 2, 3, &hashes, &["out.o"], &ws, None, false);
             seen.push((
                 e.path.clone(),
                 as_empty_dir,
+                (wild_got.is_none(), wild_wrote),
                 got.map(|o| o.restored_outputs),
                 std::fs::read(ws.join("out.o")).ok(),
                 (e.landed)(outer.path()),
@@ -172,8 +179,9 @@ fn a_forged_remote_manifest_writes_nothing_outside_the_workspace() {
     t.join().unwrap();
 
     assert_eq!(seen.len(), ESCAPES + 2, "every escape as an output, each dir one as an empty dir too");
-    for (path, as_empty_dir, restored, out, landed) in seen {
+    for (path, as_empty_dir, (wild_miss, wild_wrote), restored, out, landed) in seen {
         assert!(!landed, "{path:?} (empty dir: {as_empty_dir}) landed outside the workspace");
+        assert!(wild_miss && !wild_wrote, "{path:?}: a wildcard unit has no list without the manifest, and a miss writes nothing");
         assert_eq!(restored, Some(vec!["out.o".to_string()]), "{path:?}: the manifest must read as absent");
         assert_eq!(out.as_deref(), Some(&b"obj"[..]), "{path:?}: the declared output still restores");
     }
@@ -285,7 +293,7 @@ fn a_link_already_in_the_workspace_does_not_carry_a_restore_outside() {
 
 /// Inside the workspace but outside what the unit declares: a forged manifest
 /// naming a git hook (mode 0o777 — it would run on the next commit) or the
-/// Cookfile is read as absent, and the declared output restores alone. A
+/// Cookfile is read as absent, which for a glob unit is a miss. A
 /// declared glob still admits what it matches.
 #[test]
 fn a_forged_manifest_writes_nothing_the_unit_does_not_declare() {
@@ -299,7 +307,8 @@ fn a_forged_manifest_writes_nothing_the_unit_does_not_declare() {
         put_artifact(&backend, &k, 1 + i as u32, path, b"pwned", None, None);
         backend.put_manifest(&k, &manifest(&k, vec!["dist/app.js".into(), path.into()], vec![])).unwrap();
         let got = fetch_by_key(&ctx, 1, 2, 3, &hashes, &["dist/app.js"], &ws, None, false);
-        assert_eq!(got.map(|o| o.restored_outputs), Some(vec!["dist/app.js".to_string()]), "{path:?}: the manifest must read as absent");
+        assert!(got.is_none(), "{path:?}: the manifest reads as absent, and a glob unit has no list without it");
+        assert!(!exists(&ws.join("dist/app.js")), "{path:?}: a miss writes nothing");
     }
     assert!(!exists(&ws.join(".git")), "a hook was written");
     assert_eq!(std::fs::read(ws.join("Cookfile")).unwrap(), b"mine", "the Cookfile was overwritten");
@@ -444,7 +453,8 @@ fn a_warm_restore_refuses_a_link_the_store_swapped_in() {
 /// Names a declaration covers only by accident are refused: coverage is
 /// case-sensitive as the output walk is (`OUT/x` under `out/`); a `.` segment
 /// (`src/.` is `src` itself, which a dir artifact would chmod; `out/./Cookfile`)
-/// and a `.git` segment under a root `*` or `**` read the manifest as absent.
+/// and a `.git` segment under a root `*` or `**` read the manifest as absent
+/// (a miss: a wildcard declaration does not fix the output set).
 #[test]
 fn a_forged_manifest_names_nothing_a_declaration_covers_by_accident() {
     type Out = (&'static str, Option<&'static str>, Option<&'static str>);
@@ -458,7 +468,8 @@ fn a_forged_manifest_names_nothing_a_declaration_covers_by_accident() {
     ];
     for (declared, outs, empties) in cases {
         let (_outer, ws, got) = forge(declared, &outs, &empties);
-        assert_eq!(got, Some(vec![outs[0].0.to_string()]), "{declared} {outs:?}: the manifest must read as absent");
+        assert_eq!(got, None, "{declared} {outs:?}: the manifest reads as absent, and a wildcard unit then has no list");
+        assert!(!exists(&ws.join(outs[0].0)), "{declared} {outs:?}: a miss writes nothing");
         assert!(!exists(&ws.join("OUT")), "{declared}: OUT/x was written");
         assert!(!exists(&ws.join(".git/hooks")) && !exists(&ws.join(".GIT")), "{declared}: .git was written");
         let mode = std::fs::metadata(ws.join("src")).unwrap().permissions().mode() & 0o777;
@@ -486,5 +497,25 @@ fn reconciling_a_directory_output_never_goes_through_a_link() {
         assert!(workspace_intact(&ws), "out/h -> {target}: removed through the link");
         assert!(!exists(&ws.join("out/h")), "out/h -> {target}: the stray link stays");
         assert!(exists(&ws.join("out/a")));
+    }
+}
+
+/// A rejected manifest decides the list the declaration can fix and no other:
+/// the artifacts are all present, yet a glob unit has no list to restore (a
+/// miss, nothing written), while a literal unit restores what it declared.
+#[test]
+fn a_rejected_manifest_is_a_miss_for_a_glob_unit_and_the_declaration_for_a_literal_one() {
+    for (declared, fetched) in [("dist/*.js", None), ("dist/app.js", Some(vec!["dist/app.js".to_string()]))] {
+        let (_outer, ws, hashes, k) = workspace();
+        let store = tempfile::tempdir().unwrap();
+        let backend = LocalBackend::new(store.path().into());
+        put_artifact(&backend, &k, 0, "dist/app.js", b"obj", None, None);
+        put_artifact(&backend, &k, 1, "Cookfile", b"pwned", None, None);
+        backend.put_manifest(&k, &manifest(&k, vec!["dist/app.js".into(), "Cookfile".into()], vec![])).unwrap();
+        let ctx = RestoreCtx { backend: &backend, recipe_namespace: NS, declared_outputs: &[declared] };
+        let got = fetch_by_key(&ctx, 1, 2, 3, &hashes, &["dist/app.js"], &ws, None, false);
+        assert_eq!(got.map(|o| o.restored_outputs), fetched, "{declared}");
+        assert_eq!(exists(&ws.join("dist/app.js")), fetched.is_some(), "{declared}: a miss writes nothing");
+        assert!(!exists(&ws.join("Cookfile")), "{declared}: the forged path was written");
     }
 }

@@ -169,7 +169,7 @@ fn nonempty_report_names_the_store_path_and_discloses_sidecar_exclusion() {
     let rendered = render(&report, Path::new("/tmp/my-store"), None);
     assert!(rendered.contains("/tmp/my-store"));
     assert!(rendered.contains(".meta.json"));
-    assert!(rendered.contains(".provenance.json"));
+    assert!(rendered.contains("stored manifests"), "a stored manifest is counted, so the note says so");
 }
 
 // ---------------------------------------------------------------------------

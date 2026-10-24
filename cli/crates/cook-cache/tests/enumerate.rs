@@ -6,7 +6,9 @@
 use std::collections::BTreeSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use cook_cache::backend::{cloud_key, put_bytes, ArtifactMeta, CloudKeyInputs, LocalBackend};
+use cook_cache::backend::{
+    cloud_key, put_bytes, ArtifactMeta, CacheBackend, CloudKeyInputs, LocalBackend,
+};
 use cook_cache::store::CACHE_VERSION;
 
 const RECIPE_NS: &str = "proj/Cookfile::build";
@@ -285,4 +287,84 @@ fn last_access_is_recent_for_a_freshly_written_blob() {
         last_access <= now && now.saturating_sub(last_access) < 10,
         "last_access {last_access} should be within a few seconds of now {now}"
     );
+}
+
+fn a_manifest() -> cook_cache::backend::DeterminantManifest {
+    cook_cache::backend::DeterminantManifest {
+        schema_version: 5,
+        recipe_namespace: RECIPE_NS.into(),
+        key: "ab".repeat(32),
+        command_hash: 1,
+        env_contribution: 0,
+        seal_contribution: 0,
+        inputs: Default::default(),
+        output_paths: vec!["out".into()],
+        empty_dir_outputs: Vec::new(),
+        consulted_env: Default::default(),
+        sealed_probes: Default::default(),
+        observation: None,
+    }
+}
+
+fn manifest_path(
+    dir: &std::path::Path,
+    key: &cook_cache::backend::CloudKey,
+    suffix: &str,
+) -> std::path::PathBuf {
+    let hex = hex::encode(key);
+    dir.join(&hex[..2]).join(format!("{}.provenance.json{suffix}", &hex[2..]))
+}
+
+#[test]
+fn manifest_with_no_blob_is_listed_with_its_own_size_and_mtime() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let backend = LocalBackend::new(dir.path().to_path_buf());
+    let key = some_key(20);
+    backend.put_manifest(&key, &a_manifest()).expect("put_manifest");
+    let path = manifest_path(dir.path(), &key, "");
+    filetime::set_file_mtime(&path, filetime::FileTime::from_unix_time(1_000_000_000, 0))
+        .expect("stamp");
+    // A leftover temp of write_manifest must not be listed as well.
+    std::fs::write(manifest_path(dir.path(), &key, ".tmp"), b"scratch").expect("write tmp");
+
+    let candidates = backend.enumerate().expect("enumerate");
+    assert_eq!(candidates.len(), 1, "got {candidates:?}");
+    assert_eq!(candidates[0].key, key);
+    assert_eq!(candidates[0].kind.as_deref(), Some("manifest"));
+    assert_eq!(candidates[0].size, std::fs::metadata(&path).expect("stat").len());
+    assert_eq!(candidates[0].last_access, 1_000_000_000);
+    assert_eq!(candidates[0].recipe_namespace, "");
+}
+
+#[test]
+fn manifest_beside_a_blob_is_not_listed_twice() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let backend = LocalBackend::new(dir.path().to_path_buf());
+    let key = some_key(21);
+    let mut meta = make_meta(RECIPE_NS, "a.out", 1);
+    put_bytes(&backend, &key, b"x", &mut meta).expect("put");
+    backend
+        .put_manifest(&key, &a_manifest())
+        .expect("put_manifest");
+
+    let candidates = backend.enumerate().expect("enumerate");
+    assert_eq!(candidates.len(), 1, "got {candidates:?}");
+    assert_eq!(candidates[0].kind, None);
+}
+
+#[test]
+fn manifest_beside_a_blob_counts_toward_the_blobs_size() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let backend = LocalBackend::new(dir.path().to_path_buf());
+    let key = some_key(22);
+    let mut meta = make_meta(RECIPE_NS, "a.out", 1);
+    put_bytes(&backend, &key, b"x", &mut meta).expect("put");
+    // A served store keeps whatever bytes a PUT stored under the manifest key.
+    let path = manifest_path(dir.path(), &key, "");
+    std::fs::create_dir_all(path.parent().unwrap()).expect("mkdir");
+    std::fs::write(&path, vec![b'm'; 4096]).expect("write manifest");
+
+    let candidates = backend.enumerate().expect("enumerate");
+    assert_eq!(candidates.len(), 1, "got {candidates:?}");
+    assert_eq!(candidates[0].size, 1 + 4096);
 }

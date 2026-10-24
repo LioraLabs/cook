@@ -13,12 +13,12 @@
 //!               `fetch_by_key` returns false; no output written.
 
 use cook_cache::backend::{
-    artifact_key, cloud_key, put_bytes, ArtifactMeta, CloudKeyInputs, LocalBackend,
+    artifact_key, cloud_key, put_bytes, ArtifactMeta, CloudKeyInputs, DeterminantManifest, LocalBackend,
 };
 use cook_cache::store::CACHE_VERSION;
 use cook_contracts::DiscoveredInputs;
 use cook_cache::{
-    fetch_by_key, RestoreCtx, DISCOVERED_INPUTS_MANIFEST_INDEX, DISCOVERED_INPUTS_MANIFEST_PATH,
+    CacheBackend, fetch_by_key, RestoreCtx, DISCOVERED_INPUTS_MANIFEST_INDEX, DISCOVERED_INPUTS_MANIFEST_PATH,
 };
 
 // ── Shared constants ─────────────────────────────────────────────────────────
@@ -119,6 +119,45 @@ fn seed_backend(backend: &LocalBackend, dep_h_bytes: &[u8]) {
         target: None,
     };
     put_bytes(backend, &obj_k, obj_bytes, &mut obj_meta).expect("seed obj");
+
+    // 3. The depfile, the implicit output after the files, and the full key's
+    // determinant manifest that says so: a depfile unit has no other list.
+    let mut dep_meta = ArtifactMeta { output_index: 1, output_path: DEPFILE.to_string(), content_hash: ArtifactMeta::zero_content_hash(), ..obj_meta.clone() };
+    put_bytes(backend, &artifact_key(&full_key, 1, DEPFILE), b"main.o: src/dep.h\n", &mut dep_meta).expect("seed depfile");
+    backend
+        .put_manifest(
+            &full_key,
+            &DeterminantManifest {
+                schema_version: CACHE_VERSION,
+                recipe_namespace: RECIPE_NS.to_string(),
+                key: hex::encode(full_key),
+                command_hash: CMD_HASH,
+                env_contribution: ENV_CONTRIB,
+                seal_contribution: SEAL_CONTRIB,
+                inputs: Default::default(),
+                output_paths: vec!["build/main.o".to_string()],
+                empty_dir_outputs: vec![],
+                consulted_env: Default::default(),
+                sealed_probes: Default::default(),
+                observation: None,
+            },
+        )
+        .expect("seed manifest");
+}
+
+const DEPFILE: &str = ".cook/deps/main.d";
+
+fn manifest_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut found = Vec::new();
+    for e in std::fs::read_dir(dir).unwrap().flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            found.extend(manifest_files(&p));
+        } else if p.to_string_lossy().ends_with(".provenance.json") {
+            found.push(p);
+        }
+    }
+    found
 }
 
 // ── Test 1: HIT via manifest recovery ────────────────────────────────────────
@@ -242,4 +281,32 @@ fn cold_fetch_safe_miss_when_header_differs() {
         !wd.join("build/main.o").exists(),
         "build/main.o must NOT be created on a safe miss",
     );
+}
+
+// ── Test 3: no manifest, no list ─────────────────────────────────────────────
+
+/// The full key's determinant manifest is gone (evicted, never put) but the
+/// discovered-input sets and the artifacts remain. The caller's list is the
+/// last build's and omits the depfile, so a depfile unit has no list to
+/// restore: a miss, nothing written.
+#[test]
+fn a_depfile_unit_without_its_manifest_is_a_miss() {
+    let store_dir = tempfile::tempdir().expect("store");
+    let backend = LocalBackend::new(store_dir.path().to_path_buf());
+    seed_backend(&backend, DEP_H_BYTES_PRODUCER);
+    let manifests = manifest_files(store_dir.path());
+    assert_eq!(manifests.len(), 1, "only the full key has a manifest");
+    std::fs::remove_file(&manifests[0]).unwrap();
+
+    let consumer_dir = tempfile::tempdir().expect("consumer");
+    let wd = consumer_dir.path();
+    std::fs::create_dir_all(wd.join("src")).unwrap();
+    std::fs::write(wd.join("src/main.c"), MAIN_C_BYTES).unwrap();
+    std::fs::write(wd.join("src/dep.h"), DEP_H_BYTES_PRODUCER).unwrap();
+    let ctx = RestoreCtx { backend: &backend, recipe_namespace: RECIPE_NS, declared_outputs: &["build/main.o"] };
+    let di = DiscoveredInputs { from: DEPFILE.to_string(), format: "make".to_string() };
+    let hashes = vec![xxhash_rust::xxh3::xxh3_64(MAIN_C_BYTES)];
+    let got = fetch_by_key(&ctx, CMD_HASH, ENV_CONTRIB, SEAL_CONTRIB, &hashes, &["build/main.o"], wd, Some(&di), false);
+    assert!(got.is_none());
+    assert!(!wd.join("build/main.o").exists());
 }

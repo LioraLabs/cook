@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- **`cook cache gc` and `du` count and evict determinant manifests**
+  (CS-0270). A manifest stored with no blob beside it (every one a
+  `cook cache serve` store holds) was never sized or evicted, so the
+  store grew without bound. `gc` now frees them like any entry, `du`
+  shows them as kind `manifest`, and a read refreshes a manifest's age.
+  An evicted manifest only turns its key into a miss.
+
 - **`tools { }` sealed values are portable across machines** (COOK-277,
   CS-0157). The native tools producer folded the resolved absolute path
   into the sealed value, so identical toolchains at different locations

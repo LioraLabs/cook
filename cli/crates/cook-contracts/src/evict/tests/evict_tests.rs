@@ -373,7 +373,7 @@ fn neither_knob_set_frees_nothing_even_with_real_candidates_present() {
 /// Every artifact kind is classified, and the classification is stated here
 /// rather than derived from the list under test.
 ///
-/// This is what makes `artifact_kind::ALL` more than documentation: an eighth
+/// This is what makes `artifact_kind::ALL` more than documentation: a new
 /// kind fails this test until somebody decides which side it is on. Getting
 /// that wrong in the exempt direction strands the artifacts a manifest points
 /// at; getting it wrong the other way keeps bytes a sweep should have freed.
@@ -394,8 +394,9 @@ fn every_artifact_kind_is_either_sweep_exempt_or_deliberately_not() {
     // `size_eviction_order` unreachable. PROBE_VALUE joins it here under
     // CS-0243: no probe value is written to the store any more, so a
     // surviving entry of this kind is an orphan from an older version and
-    // must be reclaimable rather than exempt.
-    let sweepable = [k::OBSERVATION, k::PROBE_VALUE];
+    // must be reclaimable rather than exempt. MANIFEST is a blob-less
+    // determinant manifest: losing it is a miss, it strands nothing.
+    let sweepable = [k::OBSERVATION, k::PROBE_VALUE, k::MANIFEST];
 
     for kind in exempt {
         assert!(is_size_sweep_exempt(Some(kind)), "{kind} must survive a size sweep");
