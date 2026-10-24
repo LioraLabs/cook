@@ -43,6 +43,7 @@ use cook_register::RegisteredWorkspace;
 
 struct MaterializeCoordinator {
     runner: cook_register::MaterializeRunner,
+    failed_puts: Arc<cook_cache::cache_ctx::FailedPuts>,
     materializations: Arc<std::sync::Mutex<Vec<cook_contracts::registration::Materialization>>>,
 }
 
@@ -66,6 +67,13 @@ fn materialize_coordinator() -> MaterializeCoordinator {
                 ),
             >,
         >,
+        failed_puts: Arc<cook_cache::cache_ctx::FailedPuts>,
+    }
+    // The coordinator lives as long as the pass that registers through it.
+    impl Drop for Coordinator {
+        fn drop(&mut self) {
+            self.failed_puts.summarize("materialized value(s)");
+        }
     }
 
     let workers = std::thread::available_parallelism().map_or(1, usize::from);
@@ -76,7 +84,9 @@ fn materialize_coordinator() -> MaterializeCoordinator {
         buffered: Mutex::new(HashMap::new()),
         next_id: AtomicUsize::new(0),
         declarations: Mutex::new(HashMap::new()),
+        failed_puts: Default::default(),
     });
+    let failed_puts = coordinator.failed_puts.clone();
     let materializations = Arc::new(std::sync::Mutex::new(Vec::new()));
     let reported = materializations.clone();
 
@@ -127,8 +137,10 @@ fn materialize_coordinator() -> MaterializeCoordinator {
                     });
             };
             if let Some(ctx) = &request.cache_ctx {
-                if let Some(bytes) = cook_cache::backend::get_bytes(ctx.backend.as_ref(), &artifact)
-                    .map_err(|e| format!("cache read failed: {e}"))?
+                // A store that is down or refuses the token is a miss, as for a unit;
+                // the run's health line already says so.
+                if let Some(bytes) =
+                    cook_cache::backend::get_bytes(ctx.backend.as_ref(), &artifact).ok().flatten()
                 {
                     let outcome = cook_contracts::registration::MaterializationOutcome::Restored;
                     record(outcome);
@@ -209,8 +221,12 @@ fn materialize_coordinator() -> MaterializeCoordinator {
                     mode: 0o644,
                     target: None,
                 };
-                cook_cache::backend::put_bytes(ctx.backend.as_ref(), &artifact, &bytes, &mut meta)
-                    .map_err(|e| format!("cache write failed: {e}"))?;
+                if let Err(e) =
+                    cook_cache::backend::put_bytes(ctx.backend.as_ref(), &artifact, &bytes, &mut meta)
+                {
+                    let what = format!("materialized value {}", request.qualified_key);
+                    coordinator.failed_puts.record(&what, &e);
+                }
             }
             let outcome = cook_contracts::registration::MaterializationOutcome::Ran;
             record(outcome);
@@ -220,6 +236,7 @@ fn materialize_coordinator() -> MaterializeCoordinator {
     });
     MaterializeCoordinator {
         runner,
+        failed_puts,
         materializations,
     }
 }
@@ -534,6 +551,7 @@ fn register_workspace_with_materializers(
         alias_dirs_by_prefix: BTreeMap::new(),
         terminal_outputs: BTreeMap::new(),
         materializations: Vec::new(),
+        upload_failure_told: false,
     };
 
     // Which chore bodies this pass may invoke (Standard §7.6, CS-0218).
@@ -932,6 +950,7 @@ pub fn prepare_and_register_workspace_cached(
         materializers,
     )?;
     registered.materializations = coordinator.materializations.lock().unwrap().clone();
+    registered.upload_failure_told = coordinator.failed_puts.told();
     Ok(registered)
 }
 

@@ -3118,10 +3118,7 @@ pub fn execute_dag(
     // and a slow or interrupted remote cannot cost the run's records.
     let candidates: Vec<&WorkNode> = backfill_ids.iter().map(|&i| dag.node(i).payload()).collect();
     backfill_shared(&candidates, &cache_managers, &probe_store, &cache_ctx, published);
-    let more = published.failed.load(Ordering::Relaxed).saturating_sub(1);
-    if more > 0 {
-        tracing::warn!("cache upload failed for {more} more unit(s); not published");
-    }
+    published.failed.summarize("unit(s)");
 
     if failures.is_empty() {
         // Merge cached_test_results (from test cache hits synthesized during
@@ -3158,7 +3155,7 @@ pub struct Published {
     /// Units that began publishing (the CAS budget gate; see `RunResult::published_count`).
     pub count: AtomicU64,
     /// Units whose upload failed.
-    pub failed: AtomicU64,
+    pub failed: cook_cache::cache_ctx::FailedPuts,
     /// Whether the run has already said a recipe cache would not save.
     pub flush_warned: std::sync::atomic::AtomicBool,
 }
@@ -3949,9 +3946,7 @@ fn upload_completion(
         Ok(())
     })();
     if let Err(e) = outcome {
-        if published.failed.fetch_add(1, Ordering::Relaxed) == 0 {
-            tracing::warn!("cache upload for {} failed: {e}; not published", unit.display_name());
-        }
+        published.failed.record(&unit.display_name(), &e);
     }
 }
 /// COOK-166: build the producer determinant manifest from the resolved values

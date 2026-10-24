@@ -238,6 +238,7 @@ fn audit_refuses_outside_the_isolated_view() {
         alias_dirs_by_prefix: BTreeMap::new(),
         terminal_outputs: BTreeMap::new(),
         materializations: vec![],
+        upload_failure_told: false,
     };
     let store = tempfile::tempdir().unwrap();
     let ctx = scratch_cache_ctx(dir.path(), store.path()).unwrap();
@@ -370,6 +371,7 @@ mod e2e {
             alias_dirs_by_prefix: BTreeMap::new(),
             terminal_outputs: BTreeMap::new(),
             materializations: vec![],
+            upload_failure_told: false,
         }
     }
 

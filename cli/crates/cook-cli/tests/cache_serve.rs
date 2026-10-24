@@ -720,6 +720,91 @@ fn a_wrong_token_is_a_miss_with_a_warning_never_a_failed_build() {
     assert!(!err.contains(wrong), "the token never reaches stderr: {err}");
 }
 
+/// A module declaring `names` materializers (as cook_dotnet declares its inventory and graph) whose
+/// values name the recipe that writes them to `result.txt`; each producer run is logged.
+fn materializer_module(wd: &std::path::Path, names: &[&str]) {
+    let decls: String = names
+        .iter()
+        .map(|n| format!("  local {n} = cook.materialize(\"{n}\", {{}}, function()\n    fs.write(\"{n}.ran\", \"ran\")\n    return {{ value = \"{n}-value\" }}\n  end)\n"))
+        .collect();
+    let values: Vec<String> = names.iter().map(|n| format!("{n}.value")).collect();
+    let lua = format!(
+        "local M = {{}}\nfunction M.install()\n{decls}  local v = table.concat({{ {} }}, \",\")\n  cook.recipe(\"build\", {{}}, function()\n    cook.add_unit({{ output = \"result.txt\", command = \"printf '\" .. v .. \"' > result.txt\" }})\n  end)\nend\nreturn M\n",
+        values.join(", ")
+    );
+    let dir = wd.join(".cook/modules/share/lua/5.4");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("fixture.lua"), lua).unwrap();
+    std::fs::write(wd.join("Cookfile"), "use fixture\n\nfixture.install()\n").unwrap();
+}
+
+#[test]
+fn a_dead_store_builds_materialized_values_locally_naming_the_first_failed_put_and_counting_the_rest() {
+    let tmp = TempDir::new().unwrap();
+    let wd = dead_store_checkout(&tmp, "");
+    materializer_module(&wd, &["inventory", "graph"]);
+    let err = stderr_of(&run_in(&tmp, &wd, &["build"]));
+    assert_eq!(std::fs::read_to_string(wd.join("result.txt")).unwrap(), "inventory-value,graph-value");
+    let named = lines_containing(&err, "cache upload for materialized value");
+    assert_eq!(named.len(), 1, "the first failed put is told once:\n{err}");
+    assert!(named[0].starts_with("cook: warning: cache upload for materialized value fixture."), "{err}");
+    assert_eq!(
+        lines_containing(&err, "cook: warning: cache upload failed for 1 more materialized value(s); not published").len(),
+        1,
+        "the second is counted:\n{err}"
+    );
+    // The recipe's unit fails to publish too, after registration has told its failure.
+    assert_eq!(lines_containing(&err, "cache upload for").len(), 1, "one invocation names one failed put:\n{err}");
+    assert_eq!(
+        lines_containing(&err, "cook: warning: cache upload failed for 1 more unit(s); not published").len(),
+        1,
+        "the unit's is counted:\n{err}"
+    );
+    assert!(!err.contains("cache read failed"), "a failed read is a miss, never a warning:\n{err}");
+}
+
+#[test]
+fn a_wrong_token_builds_a_materialized_value_locally_with_one_warning() {
+    let tmp = TempDir::new().unwrap();
+    let (_served, addr, _log) = start(&tmp);
+    let wd = checkout(&tmp, "wrong", &addr, "", true);
+    materializer_module(&wd, &["graph"]);
+    let wrong = "not-the-servers-token";
+    let out = Command::new(env!("CARGO_BIN_EXE_cook"))
+        .arg("build")
+        .current_dir(&wd)
+        .env("XDG_CACHE_HOME", tmp.path().join("xdg-wrong"))
+        .env(API_KEY_ENV, wrong)
+        .output()
+        .unwrap();
+    let err = stderr_of(&out);
+    assert!(out.status.success(), "a refused token must not fail the build:\n{err}");
+    assert_eq!(std::fs::read_to_string(wd.join("result.txt")).unwrap(), "graph-value");
+    let named = lines_containing(&err, "cache upload for materialized value");
+    assert_eq!(named.len(), 1, "one warning for the materializer:\n{err}");
+    assert!(named[0].contains("401"), "{err}");
+    assert!(!err.contains("materialized value(s)"), "nothing more to count:\n{err}");
+    assert_eq!(lines_containing(&err, "cache upload for").len(), 1, "the unit's refused put is counted, not named:\n{err}");
+    assert!(!err.contains(wrong), "the token never reaches stderr:\n{err}");
+}
+
+#[test]
+fn a_healthy_store_publishes_a_materialized_value_another_checkout_restores() {
+    let tmp = TempDir::new().unwrap();
+    let (_served, addr, _log) = start(&tmp);
+    let a = checkout(&tmp, "a", &addr, "", true);
+    materializer_module(&a, &["graph"]);
+    let out = run_in(&tmp, &a, &["build"]);
+    assert!(a.join("graph.ran").exists(), "A computes the value");
+    assert!(!stderr_of(&out).contains("warning"), "{}", stderr_of(&out));
+
+    let b = checkout(&tmp, "b", &addr, "", true);
+    materializer_module(&b, &["graph"]);
+    run_in(&tmp, &b, &["build"]);
+    assert!(!b.join("graph.ran").exists(), "B restores the value, never runs the producer");
+    assert_eq!(std::fs::read_to_string(b.join("result.txt")).unwrap(), "graph-value");
+}
+
 // ── COOK-617 (CS-0278): a root-marker declaration is keyed and recorded unit-relative ──
 
 /// A unit declared the cook_pnpm way: `fs.glob("././Cookfile")` joins the working directory with the

@@ -498,7 +498,10 @@ where
     // bumped once per publish inside the executor, read back below once every
     // worker has joined. Only its zero / non-zero-ness is consumed. See
     // `RunResult::published_count` for what the gate does and does not claim.
-    let published = executor::Published::default();
+    let published = executor::Published {
+        failed: cook_cache::cache_ctx::FailedPuts::after(registered_workspace.upload_failure_told),
+        ..Default::default()
+    };
     let probe_values = cook_probe::store::ProbeValueStore::new();
 
     let (event_tx, event_rx) = mpsc::channel::<EngineEvent>();
