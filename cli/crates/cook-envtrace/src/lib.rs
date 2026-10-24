@@ -15,6 +15,13 @@ const PRELOAD_VAR: &str = "LD_PRELOAD";
 /// The variable naming the file the recorder appends names to; defined once, in `build.rs`.
 pub const OUT_VAR: &str = env!("COOK_ENVTRACE_OUT_VAR");
 
+/// Fixed variables (name, value length) beside the recorder's: a copy's repeat count is measured per
+/// value-length kind, and these give every block that keeps them an unread name of each kind (256 bytes
+/// or more is long). Lowercase, and the two long ones of different first character, so an ordinary
+/// prefix scan picks none of them and one predicate rarely picks every long name.
+pub const REFERENCES: [(&str, usize); 3] =
+    [("__cook_envtrace_long", 300), ("zz_cook_envtrace_long", 300), ("__cook_envtrace_short", 1)];
+
 /// Writes the recorder into `dir`; `None` where there is none to write.
 pub fn install(dir: &Path) -> std::io::Result<Option<PathBuf>> {
     let Some(so) = PRELOAD else { return Ok(None) };
@@ -36,10 +43,12 @@ pub fn env_for(so: &Path, names_file: &Path) -> BTreeMap<String, String> {
         Ok(old) if !old.is_empty() => format!("{so}:{old}"),
         _ => so.into_owned(),
     };
-    BTreeMap::from([
+    let mut env = BTreeMap::from([
         (PRELOAD_VAR.to_string(), preload),
         (OUT_VAR.to_string(), names_file.to_string_lossy().into_owned()),
-    ])
+    ]);
+    env.extend(REFERENCES.map(|(name, len)| (name.to_string(), "x".repeat(len))));
+    env
 }
 
 #[cfg(all(test, envtrace_built))]

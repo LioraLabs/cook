@@ -523,13 +523,14 @@ mod env_names {
     }
 
     #[test]
-    fn the_key_denylist_the_audit_ignores_and_the_recorders_own_variable_are_never_reported() {
+    fn the_key_denylist_the_audit_ignores_and_the_recorders_own_variables_are_never_reported() {
         let mut deny = EnvDenylist::baseline();
         deny.extend_with(&["MY_NOISE_*".to_string()]);
-        let queried = set(&[
+        let mut queried = set(&[
             "HOME", "XDG_DATA_DIRS", "MY_NOISE_X", "LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE", "LD_LIBRARY_PATH",
             cook_envtrace::OUT_VAR, "NODE_ENV", "LANGUAGES", "LCX",
         ]);
+        queried.extend(cook_envtrace::REFERENCES.map(|(name, _)| name.to_string()));
         assert_eq!(unkeyed_env(&queried, &BTreeSet::new(), &deny), set(&["LANGUAGES", "LCX", "NODE_ENV"]));
     }
 
@@ -537,10 +538,126 @@ mod env_names {
     fn read_queried_dedupes_and_a_missing_file_is_empty() {
         let dir = tempfile::tempdir().unwrap();
         let f = dir.path().join("n");
-        std::fs::write(&f, "A\nB\nA\n\n").unwrap();
+        std::fs::write(&f, "1 1 - 0 3 A\n1 1 - 0 3 B\n2 2 - 0 3 A\n\ngarbage\n").unwrap();
         assert_eq!(read_queried(&f), set(&["A", "B"]));
         assert!(!f.exists());
         assert!(read_queried(&f).is_empty());
+    }
+
+    /// `lines` as one thread's lookups of a three-entry environment X, Y, NODE_ENV:
+    /// `index count NAME`, the index prefixed `L` for a long-valued name.
+    fn queried(lines: &[&str]) -> BTreeSet<String> {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("n");
+        let text: String = lines
+            .iter()
+            .map(|l| match l.strip_prefix('L') {
+                Some(rest) => rest.split_once(' ').map(|(i, r)| format!("7 7 {i} 1 {r}\n")).unwrap(),
+                None => l.split_once(' ').map(|(i, r)| format!("7 7 {i} 0 {r}\n")).unwrap(),
+            })
+            .collect();
+        std::fs::write(&f, text).unwrap();
+        read_queried(&f)
+    }
+
+    #[test]
+    fn a_walk_of_the_whole_environment_is_a_copy_not_a_read() {
+        // node spawning a child: every name in environ order, each looked up thrice.
+        let walk = ["0 3 X", "0 3 X", "0 3 X", "1 3 Y", "1 3 Y", "1 3 Y", "2 3 NODE_ENV", "2 3 NODE_ENV", "2 3 NODE_ENV"];
+        assert_eq!(queried(&walk), BTreeSet::new());
+        // Unset names between steps are kept and do not break it.
+        assert_eq!(queried(&["0 3 X", "- 3 UNSET", "1 3 Y", "2 3 NODE_ENV"]), set(&["UNSET"]));
+    }
+
+    #[test]
+    fn point_reads_around_a_walk_are_kept() {
+        let walk = ["0 3 X", "1 3 Y", "2 3 NODE_ENV"];
+        let mut before_and_after = vec!["2 3 NODE_ENV", "- 3 UNSET"];
+        before_and_after.extend(walk);
+        before_and_after.extend(["- 3 UNSET", "2 3 NODE_ENV"]);
+        assert_eq!(queried(&before_and_after), set(&["NODE_ENV", "UNSET"]));
+        // A read of the first name, later followed by a walk, is not absorbed into it.
+        let mut first = vec!["0 3 X", "- 3 UNSET"];
+        first.extend(walk);
+        assert_eq!(queried(&first), set(&["UNSET", "X"]));
+    }
+
+    #[test]
+    fn a_first_or_last_name_looked_up_beyond_the_copys_repeat_count_is_a_read() {
+        // A point read of the first name straight before the copy.
+        assert_eq!(queried(&["0 3 X", "0 3 X", "1 3 Y", "2 3 NODE_ENV"]), set(&["X"]));
+        // The same with node's three lookups per name.
+        let mut thrice: Vec<&str> = vec!["0 3 X"; 4];
+        thrice.extend(["1 3 Y"; 3]);
+        thrice.extend(["2 3 NODE_ENV"; 3]);
+        assert_eq!(queried(&thrice), set(&["X"]));
+        // A read of the last name straight after it.
+        assert_eq!(queried(&["0 3 X", "1 3 Y", "2 3 NODE_ENV", "2 3 NODE_ENV"]), set(&["NODE_ENV"]));
+    }
+
+    #[test]
+    fn a_name_read_inside_a_loop_over_the_copy_is_a_read() {
+        // vite's loadEnv: for-in over process.env (two passes) reading each VITE_* name in the body.
+        let mut walk = vec!["0 3 X", "1 3 VITE_X", "2 3 NODE_ENV"];
+        walk.extend(["0 3 X", "1 3 VITE_X", "1 3 VITE_X", "2 3 NODE_ENV"]);
+        assert_eq!(queried(&walk), set(&["VITE_X"]));
+        // A uniform copy, three lookups a name, stays dropped.
+        let mut thrice: Vec<&str> = vec!["0 3 X"; 3];
+        thrice.extend(["1 3 VITE_X"; 3]);
+        thrice.extend(["2 3 NODE_ENV"; 3]);
+        assert_eq!(queried(&thrice), BTreeSet::new());
+        // A loop reading every name equally often cannot be told from a copy.
+        assert_eq!(queried(&["0 3 X", "0 3 X", "1 3 VITE_X", "1 3 VITE_X", "2 3 NODE_ENV", "2 3 NODE_ENV"]), BTreeSet::new());
+    }
+
+    #[test]
+    fn a_long_valued_name_in_a_copy_is_measured_against_its_own_kind() {
+        // node looks a value of 256 bytes or more up five times where short ones get three.
+        let mut copy: Vec<&str> = vec!["0 3 X"; 3];
+        copy.extend(["L1 3 LS_COLORS"; 5]);
+        copy.extend(["2 3 NODE_ENV"; 3]);
+        assert_eq!(queried(&copy), BTreeSet::new());
+        // A long name looked up more than its kind's others is still a read.
+        let mut more: Vec<&str> = vec!["L0 3 X"; 5];
+        more.extend(["L1 3 Y"; 7]);
+        more.extend(["2 3 NODE_ENV"; 3]);
+        assert_eq!(queried(&more), set(&["Y"]));
+        // JSON.stringify: one lookup a short name, two a long one.
+        assert_eq!(queried(&["0 3 X", "L1 3 LS_COLORS", "L1 3 LS_COLORS", "2 3 NODE_ENV"]), BTreeSet::new());
+    }
+
+    #[test]
+    fn a_lone_long_valued_read_survives_next_to_the_reference_long_run() {
+        // The recorder's reference long name is only copied (5); NODE_ENV, the one other long name, is read once more (6).
+        let mut block: Vec<&str> = vec!["L0 4 __cook_envtrace_long"; 5];
+        block.extend(["L1 4 NODE_ENV"; 6]);
+        block.extend(["2 4 X"; 3]);
+        block.extend(["3 4 __cook_envtrace_short"; 3]);
+        assert_eq!(queried(&block), set(&["NODE_ENV"]));
+    }
+
+    #[test]
+    fn a_pick_in_a_loop_over_the_copy_is_a_read_whatever_its_value_length() {
+        // for-in reading the picks: a pass of single lookups, then one reading the picked name.
+        let mut long_pick = vec!["0 3 X", "L1 3 LS_COLORS", "L2 3 VITE_LONG"];
+        long_pick.extend(["0 3 X", "L1 3 LS_COLORS", "L2 3 VITE_LONG", "L2 3 VITE_LONG", "L2 3 VITE_LONG"]);
+        assert_eq!(queried(&long_pick), set(&["VITE_LONG"]));
+        let mut short_pick = vec!["0 3 X", "1 3 NODE_ENV", "L2 3 LS_COLORS"];
+        short_pick.extend(["0 3 X", "0 3 X", "1 3 NODE_ENV", "L2 3 LS_COLORS"]);
+        assert_eq!(queried(&short_pick), set(&["X"]));
+    }
+
+    #[test]
+    fn a_partial_or_out_of_order_run_is_reads() {
+        assert_eq!(queried(&["0 3 X", "1 3 Y"]), set(&["X", "Y"]));
+        assert_eq!(queried(&["0 3 X", "2 3 NODE_ENV", "1 3 Y"]), set(&["NODE_ENV", "X", "Y"]));
+        // Two threads each reading part of the environment do not make one walk.
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("n");
+        std::fs::write(&f, "7 7 0 0 3 X\n7 8 1 0 3 Y\n7 7 2 0 3 NODE_ENV\n").unwrap();
+        assert_eq!(read_queried(&f), set(&["NODE_ENV", "X", "Y"]));
+        // A one-entry environment: the walk and the read look alike, so it is a read.
+        assert_eq!(queried(&["0 1 NODE_ENV"]), set(&["NODE_ENV"]));
     }
 }
 

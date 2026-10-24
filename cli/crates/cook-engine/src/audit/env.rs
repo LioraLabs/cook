@@ -37,13 +37,14 @@ pub fn unobserved_programs(text: &str, start_cwd: &Path, recorder: &Path) -> BTr
 /// Names the audit never reports as unkeyed, on top of the key computation's
 /// own denylist: locale (`LANG`, `LANGUAGE`, `LC_*`) and the dynamic loader
 /// (`LD_*`) are queried by every process and say nothing about the step. A
-/// trailing `*` is a prefix glob. The recorder's own output variable is
+/// trailing `*` is a prefix glob. The recorder's own variables are
 /// ignored too (see [`env_ignored`]).
 pub const AUDIT_IGNORED_ENV: &[&str] = &["LANG", "LANGUAGE", "LC_*", "LD_*"];
 
 fn env_ignored(name: &str, denylist: &cook_cache::envkey::EnvDenylist) -> bool {
     denylist.is_ignored(name)
         || name == cook_envtrace::OUT_VAR
+        || cook_envtrace::REFERENCES.iter().any(|(r, _)| *r == name)
         || AUDIT_IGNORED_ENV.iter().any(|p| match p.strip_suffix('*') {
             Some(prefix) => name.starts_with(prefix),
             None => name == *p,
@@ -73,10 +74,102 @@ pub(crate) fn unkeyed_env(
     queried.iter().filter(|n| !keyed.contains(*n) && !env_ignored(n, denylist)).cloned().collect()
 }
 
-/// One recorder file: names, one per line. A missing file means no traced
-/// process loaded the recorder (see [`unobserved_programs`]): nothing queried.
+/// One recorder file: a line per lookup, `pid tid index long count NAME` (index in
+/// `environ`, `-` when unset; long: `1` when the value is 256 bytes or more, else `0`;
+/// count: environ's length). A missing file means no
+/// traced process loaded the recorder (see [`unobserved_programs`]): nothing queried.
+/// Lookups that walk the whole environment in order are dropped (see [`walk_lookups`]).
 pub(super) fn read_queried(path: &Path) -> BTreeSet<String> {
     let text = std::fs::read(path).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
     let _ = std::fs::remove_file(path);
-    text.lines().filter(|l| !l.is_empty()).map(str::to_string).collect()
+    let lookups: Vec<Lookup> = text.lines().filter_map(Lookup::parse).collect();
+    let walked = walk_lookups(&lookups);
+    lookups.iter().enumerate().filter(|(i, _)| !walked.contains(i)).map(|(_, l)| l.name.to_string()).collect()
+}
+
+/// One recorded lookup.
+struct Lookup<'a> {
+    thread: (&'a str, &'a str),
+    index: Option<usize>,
+    long: bool,
+    count: usize,
+    name: &'a str,
+}
+
+impl<'a> Lookup<'a> {
+    fn parse(line: &'a str) -> Option<Self> {
+        let mut f = line.splitn(6, ' ');
+        let (pid, tid, index, long, count, name) = (f.next()?, f.next()?, f.next()?, f.next()?, f.next()?, f.next()?);
+        let index = if index == "-" { None } else { Some(index.parse().ok()?) };
+        let long = match long {
+            "0" => false,
+            "1" => true,
+            _ => return None,
+        };
+        (!name.is_empty()).then_some(Lookup { thread: (pid, tid), index, long, count: count.parse().ok()?, name })
+    }
+}
+
+/// The positions of lookups that copy the environment rather than read it: on
+/// one thread, a run that starts at `environ[0]` and steps through every entry
+/// to the last in order. A name may repeat only back to back; other lookups may
+/// fall between steps and are kept. This is how node enumerates `process.env`
+/// (to spawn a child, spread or stringify it), once per name per access, and
+/// would otherwise report every variable the caller happened to set. A copy
+/// looks each name up k times, k being the shortest run among names of its
+/// kind, long-valued (256 bytes or more: node looks those up again when the
+/// value does not fit its buffer) or short; a name's lookups beyond its kind's
+/// k are reads (a point read next to the copy, or a loop over the copy reading
+/// the names it picks, as vite's `loadEnv` does), the rest dropped.
+fn walk_lookups(lookups: &[Lookup]) -> BTreeSet<usize> {
+    struct Walk {
+        count: usize,
+        at: usize,
+        members: Vec<usize>,
+    }
+    let mut walks: BTreeMap<(&str, &str), Walk> = BTreeMap::new();
+    let mut last: BTreeMap<(&str, &str), usize> = BTreeMap::new();
+    let mut walked = BTreeSet::new();
+    // A finished copy's members are dropped once it can no longer grow.
+    let settle = |w: &Walk, walked: &mut BTreeSet<usize>| {
+        if w.at + 1 != w.count {
+            return;
+        }
+        let runs: Vec<&[usize]> = w.members.chunk_by(|a, b| lookups[*a].index == lookups[*b].index).collect();
+        for long in [false, true] {
+            let kind: Vec<_> = runs.iter().filter(|r| lookups[r[0]].long == long).collect();
+            let k = kind.iter().map(|r| r.len()).min().unwrap_or(0);
+            walked.extend(kind.iter().flat_map(|r| r[..k].iter().copied()));
+        }
+    };
+    for (i, l) in lookups.iter().enumerate() {
+        let prev = last.insert(l.thread, i);
+        let w = walks.get_mut(&l.thread);
+        let done = w.as_ref().is_some_and(|w| w.at + 1 == w.count);
+        let step = match (w, l.index) {
+            // A repeat counts only straight after the walk's previous lookup.
+            (Some(w), Some(x)) if w.count == l.count && x == w.at && w.members.last() == prev.as_ref() => Some(w),
+            (Some(w), Some(x)) if w.count == l.count && x == w.at + 1 => Some(w),
+            _ => None,
+        };
+        match step {
+            Some(w) => {
+                w.at = l.index.unwrap_or(w.at);
+                w.members.push(i);
+            }
+            // In a one-entry environment a walk and a read look alike: it stays a read.
+            None if l.index == Some(0) && l.count > 1 => {
+                if let Some(old) = walks.insert(l.thread, Walk { count: l.count, at: 0, members: vec![i] }) {
+                    settle(&old, &mut walked);
+                }
+            }
+            // A finished walk ends at the first lookup that is not its last name again.
+            None if done => {
+                settle(&walks.remove(&l.thread).unwrap(), &mut walked);
+            }
+            None => {}
+        }
+    }
+    walks.values().for_each(|w| settle(w, &mut walked));
+    walked
 }

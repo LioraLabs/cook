@@ -29,6 +29,12 @@ fn audit(dir: &Path, xdg: &Path, args: &[&str]) -> Option<Output> {
 }
 
 fn audit_with(dir: &Path, xdg: &Path, args: &[&str], env: &[(&str, &Path)]) -> Option<Output> {
+    audit_in(dir, xdg, args, env, false)
+}
+
+/// `minimal`: the caller's environment is only `HOME` and a short `PATH` holding node, strace and sh
+/// (then `env`), as under `env -i HOME=.. PATH=/usr/bin:/bin`.
+fn audit_in(dir: &Path, xdg: &Path, args: &[&str], env: &[(&str, &Path)], minimal: bool) -> Option<Output> {
     // CI sets COOK_AUDIT_E2E=require: a host that cannot run the audit fails.
     let require = std::env::var("COOK_AUDIT_E2E").is_ok_and(|v| v == "require");
     if which_strace().is_none() {
@@ -36,7 +42,15 @@ fn audit_with(dir: &Path, xdg: &Path, args: &[&str], env: &[(&str, &Path)]) -> O
         eprintln!("skipping: strace not on PATH");
         return None;
     }
-    let out = Command::new(cook_bin())
+    let mut cmd = Command::new(cook_bin());
+    if minimal {
+        // A long PATH would itself be an unread long-valued name in every copy.
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let dirs = ["node", "strace", "sh"].map(|t| std::env::split_paths(&path).find(|d| d.join(t).is_file()));
+        cmd.env_clear().env("PATH", std::env::join_paths(dirs.into_iter().flatten()).unwrap());
+        cmd.envs(std::env::var_os("HOME").map(|h| ("HOME", h)));
+    }
+    let out = cmd
         .arg("audit")
         .args(args)
         .env("XDG_CACHE_HOME", xdg)
@@ -513,6 +527,129 @@ fn an_unkeyed_environment_read_is_reported_by_name() {
     assert_eq!(f["paths"], serde_json::json!([]));
     let text = String::from_utf8_lossy(&audit(dir.path(), xdg.path(), &["lint"]).unwrap().stdout).into_owned();
     assert!(text.lines().any(|l| l.contains("lint  env  NODE_ENV") && l.contains("(unset)")), "{text}");
+}
+
+/// node copies its whole environment to spawn a child, looking up every set
+/// name: a variable only the caller set must not become a finding, while the
+/// step's own reads of a set variable, before and after the spawn, still do.
+#[test]
+fn a_spawning_step_reports_the_same_names_whatever_the_caller_set() {
+    if !has_node() {
+        return;
+    }
+    let read = "if (process.env.NODE_ENV === \\\"production\\\") {}";
+    let dir = project(&format!(
+        "recipe build\n    seal \"src/a.ts\"\n    test {{ NODE_ENV=production node -e \"{read}; require('child_process').spawnSync('true'); {read}\" }}\n"
+    ));
+    let xdg = TempDir::new().unwrap();
+    let roots = |env: &[(&str, &Path)]| audit_with(dir.path(), xdg.path(), &["build", "--json"], env).map(|o| env_roots(&json(&o)));
+    let Some(plain) = roots(&[]) else { return };
+    let canary = roots(&[("COOK_TEST_CALLER_ONLY", Path::new("1"))]).unwrap();
+    // A caller-only variable whose value does not fit node's 256-byte buffer is looked up more often.
+    let long = "x".repeat(300);
+    let long_canary = roots(&[("COOK_TEST_CALLER_LONG", Path::new(&long))]).unwrap();
+    assert!(plain.iter().any(|r| r == "NODE_ENV"), "{plain:?}");
+    assert_eq!(plain, canary);
+    assert_eq!(plain, long_canary);
+}
+
+/// vite's `loadEnv` scans the environment for a prefix, reading what it finds
+/// inside the loop: the names it reads are findings, the rest of the copy is not.
+#[test]
+fn a_prefix_scan_of_the_environment_reports_the_names_it_reads() {
+    if !has_node() {
+        return;
+    }
+    let dir = project("recipe build\n    seal \"src/a.ts\"\n    test { node scan.js }\n");
+    // The child's environment puts VITE_X and a long-valued VITE_LONG in the middle of the block, where a copy's repeats are.
+    let scan = "const e = {};
+if (!process.env.COOK_TEST_CHILD) require('child_process').spawnSync(process.execPath, [__filename], { env: { ...process.env, VITE_X: '1', VITE_LONG: 'x'.repeat(300), COOK_TEST_CHILD: '1' } });
+else for (const k in process.env) if (k.startsWith('VITE_')) e[k] = process.env[k];
+";
+    fs::write(dir.path().join("scan.js"), scan).unwrap();
+    let xdg = TempDir::new().unwrap();
+    let roots = |env: &[(&str, &Path)]| audit_with(dir.path(), xdg.path(), &["build", "--json"], env).map(|o| env_roots(&json(&o)));
+    let Some(plain) = roots(&[]) else { return };
+    let canary = roots(&[("COOK_TEST_CALLER_ONLY", Path::new("1"))]).unwrap();
+    // A caller-only variable whose value does not fit node's 256-byte buffer is looked up more often.
+    let long = "x".repeat(300);
+    let long_canary = roots(&[("COOK_TEST_CALLER_LONG", Path::new(&long))]).unwrap();
+    assert!(plain.iter().any(|r| r == "VITE_X"), "{plain:?}");
+    assert!(plain.iter().any(|r| r == "VITE_LONG"), "{plain:?}");
+    assert_eq!(plain, canary);
+    assert_eq!(plain, long_canary);
+}
+
+/// A copy's repeat count is measured per value-length kind; a read name that is
+/// the only long-valued one in the block must not be taken for the copy itself.
+#[test]
+fn a_read_of_the_only_long_valued_name_before_a_copy_is_reported() {
+    if !has_node() {
+        return;
+    }
+    let dir = project("recipe build\n    seal \"src/a.ts\"\n    test { node lone.js }\n");
+    // The read name is the block's first entry, read straight before the copy: the copy's walk then starts with the read's repeats. The child keeps no long value but the recorder's own and that name (not NODE_ENV: node looks that up itself).
+    let script = "if (!process.env.COOK_TEST_CHILD) {
+  const env = {};
+  for (const [k, v] of Object.entries(process.env)) if (v.length < 256 || k === 'LD_PRELOAD' || k.includes('cook_envtrace')) env[k] = v;
+  require('child_process').spawnSync(process.execPath, [__filename], { env: { COOK_TEST_LONG_READ: 'x'.repeat(300), ...env, COOK_TEST_CHILD: '1' } });
+} else { process.env.COOK_TEST_LONG_READ; require('child_process').spawnSync('/bin/true'); }
+";
+    fs::write(dir.path().join("lone.js"), script).unwrap();
+    let xdg = TempDir::new().unwrap();
+    let roots = |env: &[(&str, &Path)]| audit_with(dir.path(), xdg.path(), &["build", "--json"], env).map(|o| env_roots(&json(&o)));
+    let Some(plain) = roots(&[]) else { return };
+    assert!(plain.iter().any(|r| r == "COOK_TEST_LONG_READ"), "{plain:?}");
+}
+
+/// A loop over the environment reading the names a prefix picks, where the pick is
+/// the only long-valued name the caller set: the audit's private variables match
+/// no ordinary prefix, so the pick is reported, the same whatever else the caller set.
+#[test]
+fn a_cook_prefix_pick_of_the_lone_long_name_is_reported_whatever_the_caller_set() {
+    a_prefix_pick_is_reported("COOK_", "COOK_TEST_PICKED");
+}
+
+#[test]
+fn a_c_prefix_pick_of_the_lone_long_name_is_reported_whatever_the_caller_set() {
+    a_prefix_pick_is_reported("C", "CI_TOKEN");
+}
+
+fn a_prefix_pick_is_reported(prefix: &str, name: &str) {
+    if !has_node() {
+        return;
+    }
+    let long = "x".repeat(300);
+    let dir = project("recipe build\n    seal \"src/a.ts\"\n    test { node pick.js }\n");
+    let pick = format!("for (const k in process.env) if (k.startsWith('{prefix}')) process.env[k];\n");
+    fs::write(dir.path().join("pick.js"), pick).unwrap();
+    let xdg = TempDir::new().unwrap();
+    let roots = |env: &[(&str, &Path)]| {
+        audit_in(dir.path(), xdg.path(), &["build", "--json"], env, true).map(|o| env_roots(&json(&o)))
+    };
+    let Some(minimal) = roots(&[(name, Path::new(&long))]) else { return };
+    let canary = roots(&[(name, Path::new(&long)), ("UNREAD_LONG", Path::new(&long))]).unwrap();
+    assert!(minimal.iter().any(|r| r == name), "{prefix}: {minimal:?}");
+    assert_eq!(minimal, canary, "{prefix}");
+}
+
+/// The audit's own variables are read like any other, yet never reported, recorded or shown.
+#[test]
+fn the_audits_private_variables_never_surface() {
+    if !has_node() {
+        return;
+    }
+    let dir = project("recipe build\n    seal \"src/a.ts\"\n    test { node read.js }\n");
+    let read = "for (const k of Object.keys(process.env)) if (k.includes('cook_envtrace')) process.env[k];\n";
+    fs::write(dir.path().join("read.js"), read).unwrap();
+    let xdg = TempDir::new().unwrap();
+    let Some(json_out) = audit(dir.path(), xdg.path(), &["build", "--json"]) else { return };
+    let text_out = audit(dir.path(), xdg.path(), &["build"]).unwrap();
+    audit(dir.path(), xdg.path(), &["build", "--baseline"]).unwrap();
+    let baseline = fs::read_to_string(dir.path().join(BASELINE)).unwrap();
+    for shown in [String::from_utf8_lossy(&json_out.stdout).into_owned(), String::from_utf8_lossy(&text_out.stdout).into_owned(), baseline] {
+        assert!(!shown.contains("cook_envtrace"), "{shown}");
+    }
 }
 
 #[test]
