@@ -24,12 +24,6 @@ use cook_execute::{WorkItem, WorkerPool};
 
 use crate::{EngineError, EngineEvent, NodeKind, RecipeKind, WorkNode};
 
-/// COOK-165: expose the cache schema version to the read-only `why::explain`
-/// walk so its recomputed cloud_key matches the executor's.
-pub(crate) fn cache_version() -> u32 {
-    CACHE_VERSION
-}
-
 // ---------------------------------------------------------------------------
 // RecipeTracker
 // ---------------------------------------------------------------------------
@@ -902,15 +896,7 @@ pub fn execute_dag(
                 None => return CacheDecision::Miss(cause),
             };
         input_hashes.sort();
-        let namespace = recipe_namespace(&meta.project_id, &meta.cookfile_path, &meta.recipe_name);
-        let declared_key = cloud_key(&CloudKeyInputs {
-            schema_version: CACHE_VERSION,
-            recipe_namespace: &namespace,
-            command_hash: meta.command_hash,
-            env_contribution: meta.env_contribution,
-            seal_contribution: seal_contrib,
-            sorted_input_content_hashes: &input_hashes,
-        });
+        let declared_key = meta_cloud_key(meta, seal_contrib, &input_hashes);
         // CS-0204: an observing unit's body can load a module too, and
         // `publish_completion` stores its observation under the module-folded
         // key. So the same candidate reconstruction `fetch_by_key` does has to
@@ -946,14 +932,7 @@ pub fn execute_dag(
                 let mut full = input_hashes.clone();
                 full.append(&mut module_hashes);
                 full.sort();
-                cloud_key(&CloudKeyInputs {
-                    schema_version: CACHE_VERSION,
-                    recipe_namespace: &namespace,
-                    command_hash: meta.command_hash,
-                    env_contribution: meta.env_contribution,
-                    seal_contribution: seal_contrib,
-                    sorted_input_content_hashes: &full,
-                })
+                meta_cloud_key(meta, seal_contrib, &full)
             };
             let Some(observation) =
                 cook_cache::shared_observation(cache_ctx.backend.as_ref(), &key)
@@ -1049,11 +1028,9 @@ pub fn execute_dag(
         // which would present the dominant "env value flipped" warm re-run as
         // an unattributable cold build. A sibling entry under the same output
         // identity is proof of history: attribute the miss to env (COOK-276).
-        let lookup = cm.lookup_step(
-            &meta.recipe_name,
-            &meta.cache_key,
-            meta.output_paths[0].as_str(),
-        );
+        let identity = cook_contracts::cache::local_key::producing_identity(&meta.output_paths)
+            .unwrap_or_default();
+        let lookup = cm.lookup_step(&meta.recipe_name, &meta.cache_key, &identity);
         let entry = lookup.entry.as_ref();
         let env_moved_key = lookup.env_moved_key;
         // CS-0085 §17.6: when any declared output is a glob pattern AND a prior
@@ -3223,11 +3200,9 @@ fn publish_completion(
     // COOK-161: fold the effective seal set's probe values into the persisted
     // key (the sealed probes have run by now — the unit depends on them).
     let seal_contrib = crate::seal::seal_contribution(&meta.seal_keys, probe_store);
-    let identity = resolved_output_paths
-        .first()
-        .map(String::as_str)
-        .unwrap_or_else(|| meta.cache_key.split('@').next().unwrap_or(&meta.cache_key));
-    let prior = cm.lookup_step(&meta.recipe_name, &meta.cache_key, identity);
+    let identity = cook_contracts::cache::local_key::producing_identity(&meta.output_paths)
+        .unwrap_or_else(|| meta.cache_key.split('@').next().unwrap_or(&meta.cache_key).to_string());
+    let prior = cm.lookup_step(&meta.recipe_name, &meta.cache_key, &identity);
     let judged_refs: Vec<&str> = judged_inputs.iter().map(String::as_str).collect();
     let output_refs: Vec<&str> = resolved_output_paths.iter().map(String::as_str).collect();
     let (prior_result, _) = needs_rebuild_cook(
@@ -3480,6 +3455,27 @@ fn empty_dir_outputs(
     empty_dir_paths
 }
 
+/// The cloud key (spec §5.3) `meta`'s unit composes over `sorted_hashes`: the
+/// one place a `CacheMeta` becomes `CloudKeyInputs`, so every key folds the
+/// same declaration — the output paths as written.
+pub(crate) fn meta_cloud_key(
+    meta: &cook_contracts::CacheMeta,
+    seal_contribution: u64,
+    sorted_hashes: &[u64],
+) -> [u8; 32] {
+    let namespace = recipe_namespace(&meta.project_id, &meta.cookfile_path, &meta.recipe_name);
+    let declared: Vec<&str> = meta.output_paths.iter().map(String::as_str).collect();
+    cloud_key(&CloudKeyInputs {
+        schema_version: CACHE_VERSION,
+        recipe_namespace: &namespace,
+        command_hash: meta.command_hash,
+        env_contribution: meta.env_contribution,
+        seal_contribution,
+        declared_outputs: &declared,
+        sorted_input_content_hashes: sorted_hashes,
+    })
+}
+
 /// The cloud key (spec §5.3) a unit's finished `StepEntry` is published under.
 /// Single-source for the fresh-run upload and for any caller holding only a
 /// recorded entry.
@@ -3502,16 +3498,7 @@ fn entry_cloud_key(
         .map(|fr| fr.hash)
         .collect();
     sorted_hashes.sort();
-    let recipe_namespace =
-        recipe_namespace(&meta.project_id, &meta.cookfile_path, &meta.recipe_name);
-    cloud_key(&CloudKeyInputs {
-        schema_version: CACHE_VERSION,
-        recipe_namespace: &recipe_namespace,
-        command_hash: meta.command_hash,
-        env_contribution: meta.env_contribution,
-        seal_contribution,
-        sorted_input_content_hashes: &sorted_hashes,
-    })
+    meta_cloud_key(meta, seal_contribution, &sorted_hashes)
 }
 
 /// The output log a replay of a hit presents: the one published under the
@@ -3690,14 +3677,7 @@ fn upload_completion(
         if let Some(declared_hashes) =
             cook_cache::hash_input_paths(&declared_refs, working_dir)
         {
-            let declared_key = cloud_key(&CloudKeyInputs {
-                schema_version: CACHE_VERSION,
-                recipe_namespace: &recipe_namespace,
-                command_hash: meta.command_hash,
-                env_contribution: meta.env_contribution,
-                seal_contribution: seal_contrib,
-                sorted_input_content_hashes: &declared_hashes,
-            });
+            let declared_key = meta_cloud_key(meta, seal_contrib, &declared_hashes);
             // Parse the discovered relative paths the SAME way the warm path does.
             let source_for_skip =
                 judged_inputs.first().map(String::as_str).unwrap_or("");
@@ -3808,14 +3788,7 @@ fn upload_completion(
         if let Some(declared_hashes) =
             cook_cache::hash_input_paths(&declared_refs, working_dir)
         {
-            let declared_key = cloud_key(&CloudKeyInputs {
-                schema_version: CACHE_VERSION,
-                recipe_namespace: &recipe_namespace,
-                command_hash: meta.command_hash,
-                env_contribution: meta.env_contribution,
-                seal_contribution: seal_contrib,
-                sorted_input_content_hashes: &declared_hashes,
-            });
+            let declared_key = meta_cloud_key(meta, seal_contrib, &declared_hashes);
             let observed: Vec<String> = entry
                 .module_inputs
                 .iter()

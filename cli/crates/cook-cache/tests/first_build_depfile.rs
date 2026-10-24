@@ -48,6 +48,7 @@ fn machine_a_uploads_thin_entry_machine_b_pulls_correctly() {
         command_hash: entry_a.command_hash,
         env_contribution: entry_a.env_contribution,
         seal_contribution: 0,
+        declared_outputs: &[],
         sorted_input_content_hashes: &sorted_hashes,
     };
     let key = cloud_key(&inputs_for_key);
@@ -83,6 +84,7 @@ fn machine_a_uploads_thin_entry_machine_b_pulls_correctly() {
         command_hash: entry_b.command_hash,
         env_contribution: entry_b.env_contribution,
         seal_contribution: 0,
+        declared_outputs: &[],
         sorted_input_content_hashes: &sorted_b,
     };
     let key_b = cloud_key(&inputs_for_key_b);
@@ -135,6 +137,7 @@ fn header_change_after_pull_invalidates_correctly() {
         command_hash: entry_thin.command_hash,
         env_contribution: entry_thin.env_contribution,
         seal_contribution: 0,
+        declared_outputs: &[],
         sorted_input_content_hashes: &h_thin,
     });
     let key_fat = cloud_key(&CloudKeyInputs {
@@ -143,6 +146,7 @@ fn header_change_after_pull_invalidates_correctly() {
         command_hash: entry_with_header.command_hash,
         env_contribution: entry_with_header.env_contribution,
         seal_contribution: 0,
+        declared_outputs: &[],
         sorted_input_content_hashes: &h_fat,
     });
 

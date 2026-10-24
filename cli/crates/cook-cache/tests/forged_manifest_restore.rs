@@ -84,22 +84,29 @@ fn put_artifact(b: &dyn CacheBackend, key: &[u8; 32], idx: u32, path: &str, byte
 }
 
 /// A fresh `outer/ws` holding the one input, and the unit's key.
-fn workspace() -> (tempfile::TempDir, std::path::PathBuf, Vec<u64>, [u8; 32]) {
+fn workspace() -> (tempfile::TempDir, std::path::PathBuf, Vec<u64>) {
     let outer = tempfile::tempdir().unwrap();
     let ws = outer.path().join("ws");
     std::fs::create_dir_all(&ws).unwrap();
     std::fs::set_permissions(&ws, std::fs::Permissions::from_mode(0o700)).unwrap();
     std::fs::write(ws.join("in.c"), b"src").unwrap();
     let hashes = vec![xxhash_rust::xxh3::xxh3_64(b"src")];
-    let k = cloud_key(&CloudKeyInputs {
+    (outer, ws, hashes)
+}
+
+/// The key a unit declaring `declared` over `hashes` publishes under: the
+/// declaration is part of it, so the store must be seeded under the same one
+/// the restore below asks for.
+fn key_for(hashes: &[u64], declared: &[&str]) -> [u8; 32] {
+    cloud_key(&CloudKeyInputs {
         schema_version: CACHE_VERSION,
         recipe_namespace: NS,
         command_hash: 1,
         env_contribution: 2,
         seal_contribution: 3,
-        sorted_input_content_hashes: &hashes,
-    });
-    (outer, ws, hashes, k)
+        declared_outputs: declared,
+        sorted_input_content_hashes: hashes,
+    })
 }
 
 fn manifest(k: &[u8; 32], output_paths: Vec<String>, empty_dir_outputs: Vec<String>) -> DeterminantManifest {
@@ -146,19 +153,23 @@ fn a_forged_remote_manifest_writes_nothing_outside_the_workspace() {
     let mut seen = Vec::new();
     for as_empty_dir in [false, true] {
         for i in 0..ESCAPES {
-            let (outer, ws, hashes, k) = workspace();
+            let (outer, ws, hashes) = workspace();
             let e = escapes(outer.path()).remove(i);
             if as_empty_dir && e.kind != Some("dir") {
                 continue;
             }
-            put_artifact(&client, &k, 0, "out.o", b"obj", None, None);
-            put_artifact(&client, &k, 1, &e.path, b"pwned", e.kind, e.target);
-            let m = if as_empty_dir {
-                manifest(&k, vec!["out.o".into()], vec![e.path.clone()])
-            } else {
-                manifest(&k, vec!["out.o".into(), e.path.clone()], vec![])
-            };
-            client.put_manifest(&k, &m).unwrap();
+            // The same forgery under each declaration's own key.
+            for declared in [&["out.o", "**"][..], &["out.o"][..]] {
+                let k = key_for(&hashes, declared);
+                put_artifact(&client, &k, 0, "out.o", b"obj", None, None);
+                put_artifact(&client, &k, 1, &e.path, b"pwned", e.kind, e.target);
+                let m = if as_empty_dir {
+                    manifest(&k, vec!["out.o".into()], vec![e.path.clone()])
+                } else {
+                    manifest(&k, vec!["out.o".into(), e.path.clone()], vec![])
+                };
+                client.put_manifest(&k, &m).unwrap();
+            }
 
             let wild = RestoreCtx { backend: &client, recipe_namespace: NS, declared_outputs: &["out.o", "**"] };
             let wild_got = fetch_by_key(&wild, 1, 2, 3, &hashes, &["out.o"], &ws, None, false);
@@ -192,8 +203,9 @@ fn a_forged_remote_manifest_writes_nothing_outside_the_workspace() {
 #[test]
 fn a_cold_restore_refuses_a_declared_path_outside_the_workspace() {
     for i in 0..ESCAPES {
-        let (outer, ws, hashes, k) = workspace();
+        let (outer, ws, hashes) = workspace();
         let e = escapes(outer.path()).remove(i);
+        let k = key_for(&hashes, &[e.path.as_str()]);
         let store = tempfile::tempdir().unwrap();
         let backend = LocalBackend::new(store.path().into());
         put_artifact(&backend, &k, 0, &e.path, b"pwned", e.kind, e.target);
@@ -208,10 +220,11 @@ fn a_cold_restore_refuses_a_declared_path_outside_the_workspace() {
 /// asks for a restore of a path outside the workspace, and gets a rebuild.
 #[test]
 fn a_warm_restore_refuses_a_recorded_path_outside_the_workspace() {
-    let (outer, ws, hashes, k) = workspace();
+    let (outer, ws, hashes) = workspace();
     let store = tempfile::tempdir().unwrap();
     let backend = LocalBackend::new(store.path().into());
     let path = "../escaped.txt";
+    let k = key_for(&hashes, &[path]);
     put_artifact(&backend, &k, 0, path, b"pwned", None, None);
     let entry = StepEntry {
         inputs: vec![FileRecord {
@@ -240,13 +253,14 @@ fn a_warm_restore_refuses_a_recorded_path_outside_the_workspace() {
 
 /// A cold fetch of `outputs` (path, kind, target), seeded in a fresh local
 /// store at their index, with no manifest.
-fn cold(ws: &Path, hashes: &[u64], k: &[u8; 32], outputs: &[(&str, Option<&str>, Option<&str>)]) -> Option<Vec<String>> {
+fn cold(ws: &Path, hashes: &[u64], outputs: &[(&str, Option<&str>, Option<&str>)]) -> Option<Vec<String>> {
     let store = tempfile::tempdir().unwrap();
     let backend = LocalBackend::new(store.path().into());
+    let paths: Vec<&str> = outputs.iter().map(|o| o.0).collect();
+    let k = &key_for(hashes, &paths);
     for (i, (path, kind, target)) in outputs.iter().enumerate() {
         put_artifact(&backend, k, i as u32, path, b"pwned", *kind, *target);
     }
-    let paths: Vec<&str> = outputs.iter().map(|o| o.0).collect();
     let ctx = RestoreCtx { backend: &backend, recipe_namespace: NS, declared_outputs: &paths };
     fetch_by_key(&ctx, 1, 2, 3, hashes, &paths, ws, None, false).map(|o| o.restored_outputs)
 }
@@ -257,9 +271,9 @@ fn cold(ws: &Path, hashes: &[u64], k: &[u8; 32], outputs: &[(&str, Option<&str>,
 #[test]
 fn a_chain_of_links_does_not_carry_a_restore_outside() {
     for order in [["y", "x"], ["x", "y"]] {
-        let (outer, ws, hashes, k) = workspace();
+        let (outer, ws, hashes) = workspace();
         let link = |name: &'static str| (name, Some("symlink"), Some(if name == "y" { "." } else { "y/.." }));
-        let got = cold(&ws, &hashes, &k, &[link(order[0]), link(order[1]), ("x/evil", None, None)]);
+        let got = cold(&ws, &hashes, &[link(order[0]), link(order[1]), ("x/evil", None, None)]);
         assert!(got.is_none(), "{order:?}: the chain is a miss");
         assert!(!exists(&outer.path().join("evil")), "{order:?}: x/evil landed outside the workspace");
         // Nor is a link left behind that leads out for the next writer.
@@ -277,12 +291,12 @@ fn a_chain_of_links_does_not_carry_a_restore_outside() {
 fn a_link_already_in_the_workspace_does_not_carry_a_restore_outside() {
     // `nm/../evil` folds to `evil` by name; the kernel follows `nm` first.
     for (path, kind) in [("nm/evil", None), ("nm/../evil", None), ("nm", Some("dir")), ("nm/.", Some("dir"))] {
-        let (outer, ws, hashes, k) = workspace();
+        let (outer, ws, hashes) = workspace();
         let real = outer.path().join("real");
         std::fs::create_dir(&real).unwrap();
         std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o700)).unwrap();
         std::os::unix::fs::symlink(&real, ws.join("nm")).unwrap();
-        let got = cold(&ws, &hashes, &k, &[(path, kind, None)]);
+        let got = cold(&ws, &hashes, &[(path, kind, None)]);
         assert!(got.is_none(), "{path:?}: a miss");
         assert!(!exists(&real.join("evil")), "{path:?}: written through the link");
         assert!(!exists(&outer.path().join("evil")), "{path:?}: written beside the link's target");
@@ -297,7 +311,8 @@ fn a_link_already_in_the_workspace_does_not_carry_a_restore_outside() {
 /// declared glob still admits what it matches.
 #[test]
 fn a_forged_manifest_writes_nothing_the_unit_does_not_declare() {
-    let (outer, ws, hashes, k) = workspace();
+    let (outer, ws, hashes) = workspace();
+    let k = key_for(&hashes, &["dist/*.js"]);
     std::fs::write(ws.join("Cookfile"), b"mine").unwrap();
     let store = tempfile::tempdir().unwrap();
     let backend = LocalBackend::new(store.path().into());
@@ -337,7 +352,8 @@ fn a_forged_manifest_cannot_leave_a_declared_directory() {
         ("out/", vec![("out/a.cook.tmp", Some("symlink"), Some("../Cookfile")), ("out/a", None, None)]),
     ];
     for (declared, outs) in cases {
-        let (outer, ws, hashes, k) = workspace();
+        let (outer, ws, hashes) = workspace();
+        let k = key_for(&hashes, &[declared]);
         std::fs::write(ws.join("Cookfile"), b"mine").unwrap();
         let store = tempfile::tempdir().unwrap();
         let backend = LocalBackend::new(store.path().into());
@@ -361,7 +377,8 @@ fn a_forged_manifest_cannot_leave_a_declared_directory() {
 /// manifest naming them (`empties` as empty dirs); the workspace also holds
 /// `src/main.c` (dir mode 0o755), a Cookfile and `.git/objects/pack`.
 fn forge(declared: &str, outs: &[(&str, Option<&str>, Option<&str>)], empties: &[&str]) -> (tempfile::TempDir, std::path::PathBuf, Option<Vec<String>>) {
-    let (outer, ws, hashes, k) = workspace();
+    let (outer, ws, hashes) = workspace();
+    let k = key_for(&hashes, &[declared]);
     std::fs::create_dir_all(ws.join("src")).unwrap();
     std::fs::write(ws.join("src/main.c"), b"mine").unwrap();
     std::fs::set_permissions(ws.join("src"), std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -431,7 +448,8 @@ fn a_restored_link_points_only_at_a_declared_output() {
 /// rule: a rebuild, no link.
 #[test]
 fn a_warm_restore_refuses_a_link_the_store_swapped_in() {
-    let (_outer, ws, hashes, k) = workspace();
+    let (_outer, ws, hashes) = workspace();
+    let k = key_for(&hashes, &["out/"]);
     let store = tempfile::tempdir().unwrap();
     let backend = LocalBackend::new(store.path().into());
     put_artifact(&backend, &k, 0, "out/a", b"", Some("symlink"), Some(".."));
@@ -506,7 +524,8 @@ fn reconciling_a_directory_output_never_goes_through_a_link() {
 #[test]
 fn a_rejected_manifest_is_a_miss_for_a_glob_unit_and_the_declaration_for_a_literal_one() {
     for (declared, fetched) in [("dist/*.js", None), ("dist/app.js", Some(vec!["dist/app.js".to_string()]))] {
-        let (_outer, ws, hashes, k) = workspace();
+        let (_outer, ws, hashes) = workspace();
+        let k = key_for(&hashes, &[declared]);
         let store = tempfile::tempdir().unwrap();
         let backend = LocalBackend::new(store.path().into());
         put_artifact(&backend, &k, 0, "dist/app.js", b"obj", None, None);

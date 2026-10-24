@@ -59,6 +59,7 @@ fn restore_on_hit_writes_bytes_back_to_disk_and_returns_skip() {
         command_hash: 0xbeef,
         env_contribution: 0,
         seal_contribution: 0,
+        declared_outputs: &["**"],
         sorted_input_content_hashes: &sorted,
     });
     let artifact_k = artifact_key(&cloud_k, 0, "out.o");
@@ -223,6 +224,7 @@ fn restore_rejects_tampered_backend_bytes() {
         command_hash: 0xbeef,
         env_contribution: 0,
         seal_contribution: 0,
+        declared_outputs: &["**"],
         sorted_input_content_hashes: &sorted,
     });
     let artifact_k = artifact_key(&cloud_k, 0, "out.o");

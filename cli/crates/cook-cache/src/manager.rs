@@ -173,7 +173,8 @@ impl ThreadSafeCacheManager {
     /// Look up a single step by cache key, copying just that entry.
     ///
     /// This is the per-work-node hot path (COOK-306). `output_base` is the
-    /// unit's first declared output path, used only to attribute a miss to a
+    /// unit's identity without its env suffix (`local_key::producing_identity`
+    /// for a producing unit), used only to attribute a miss to a
     /// changed env value — see [`StepLookup::env_moved_key`].
     pub fn lookup_step(
         &self,

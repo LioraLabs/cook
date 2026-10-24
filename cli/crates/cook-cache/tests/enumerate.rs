@@ -39,6 +39,7 @@ fn some_key(seed: u64) -> cook_cache::backend::CloudKey {
         command_hash: seed,
         env_contribution: 0,
         seal_contribution: 0,
+        declared_outputs: &[],
         sorted_input_content_hashes: &[],
     })
 }

@@ -31,8 +31,33 @@ fn keyed(
 
 #[test]
 fn a_producing_unit_is_identified_by_its_first_output() {
-    assert_eq!(key(&["a.o", "a.d"], &["a.c"], 0xbeef, 0), "a.o");
+    assert_eq!(key(&["a.o"], &["a.c"], 0xbeef, 0), "a.o");
     assert_eq!(key(&["a.o"], &["a.c"], 0xbeef, 0x1234), "a.o@1234");
+    let multi = key(&["a.o", "a.d"], &["a.c"], 0xbeef, 0x1234);
+    let (identity, env) = multi.rsplit_once('@').unwrap();
+    assert_eq!(env, "1234");
+    let digest = identity.strip_prefix("a.o:").expect("first output, then the digest");
+    assert!(digest.len() == 16 && digest.chars().all(|c| c.is_ascii_hexdigit()), "{multi}");
+}
+
+/// CS-0276: the rest of the output declaration is a determinant. A record
+/// filed for `a.txt out/` and judged against `a.txt dist/` by its recorded
+/// concrete outputs would replay without `dist/` ever being produced.
+#[test]
+fn the_whole_output_declaration_separates_producing_units() {
+    let k = |outs: &[&str]| key(outs, &["a.c"], 0xbeef, 0);
+    assert_ne!(k(&["a.txt", "out/"]), k(&["a.txt", "dist/"]));
+    assert_ne!(k(&["a.txt", "out/x"]), k(&["a.txt", "out/"]));
+    assert_ne!(k(&["a.txt"]), k(&["a.txt", "b.txt"]));
+    assert_ne!(k(&["a.txt", "b.txt"]), k(&["a.txt", "b.txt", "c.txt"]));
+    assert_ne!(k(&["a", "bc", "d"]), k(&["a", "b", "cd"]), "paths cannot run together");
+    assert_eq!(k(&["a.txt", "out/"]), k(&["a.txt", "out/"]));
+    assert_eq!(
+        producing_identity(&["a.txt".into(), "out/".into()]).as_deref(),
+        k(&["a.txt", "out/"]).as_str().into(),
+        "the env-moved probe looks for siblings of the same identity the key is filed under"
+    );
+    assert_eq!(producing_identity(&[]), None);
 }
 
 /// The producing branch reads NOTHING but the output list and the env

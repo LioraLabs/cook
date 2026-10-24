@@ -748,6 +748,7 @@ fn try_restore(
         command_hash: entry.command_hash,
         env_contribution: entry.env_contribution,
         seal_contribution: entry.seal_contribution,
+        declared_outputs: ctx.declared_outputs,
         sorted_input_content_hashes: &sorted,
     };
     let cloud_k = crate::cas_backend::cloud_key(&key_inputs);
@@ -1029,6 +1030,7 @@ pub fn fetch_by_key(
         command_hash,
         env_contribution,
         seal_contribution,
+        declared_outputs: ctx.declared_outputs,
         sorted_input_content_hashes, // declared-only, exactly as passed
     });
     // Candidate discovered-input sets. A unit without discovered_inputs has
@@ -1081,6 +1083,7 @@ pub fn fetch_by_key(
             command_hash,
             env_contribution,
             seal_contribution,
+            declared_outputs: ctx.declared_outputs,
             sorted_input_content_hashes: &full_hashes,
         });
         let depfile = discovered_inputs.map(|di| di.from.as_str());

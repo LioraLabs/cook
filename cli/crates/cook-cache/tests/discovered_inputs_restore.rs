@@ -70,6 +70,7 @@ fn missing_outputs_and_depfile_are_both_restored() {
         command_hash: 0xc0de,
         env_contribution: 0,
         seal_contribution: 0,
+        declared_outputs: &["**"],
         sorted_input_content_hashes: &sorted,
     });
 

@@ -264,6 +264,11 @@ pub struct CloudKeyInputs<'a> {
     /// COOK-161 / CS-0107: the unit's effective-seal-set value fold (see
     /// `StepEntry.seal_contribution`). Zero for an unsealed unit.
     pub seal_contribution: u64,
+    /// The unit's output declaration as written, in declared order — globs
+    /// and directory entries unresolved (§{exec.cache.single-key}'s "declared
+    /// output paths", CS-0276). Empty for an observing unit. Not the resolved
+    /// names: a consumer composes K before anything has been produced.
+    pub declared_outputs: &'a [&'a str],
     /// Caller MUST sort by path before passing. The slice is hashed in given
     /// order; sorting is the caller's responsibility (cf. spec §5.3).
     pub sorted_input_content_hashes: &'a [u64],
@@ -413,6 +418,13 @@ pub fn cloud_key(inputs: &CloudKeyInputs<'_>) -> CloudKey {
     h.update(inputs.command_hash.to_le_bytes());
     h.update(inputs.env_contribution.to_le_bytes());
     h.update(inputs.seal_contribution.to_le_bytes());
+    // Count-prefixed and NUL-terminated, so no declaration can run into the
+    // fixed-width input hashes that follow it.
+    h.update((inputs.declared_outputs.len() as u32).to_le_bytes());
+    for path in inputs.declared_outputs {
+        h.update(path.as_bytes());
+        h.update([0x00]);
+    }
     for hash in inputs.sorted_input_content_hashes {
         h.update(hash.to_le_bytes());
     }

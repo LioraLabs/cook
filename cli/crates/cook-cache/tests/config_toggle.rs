@@ -17,6 +17,7 @@ fn key_for(env_contrib: u64) -> [u8; 32] {
         command_hash: 0x1111,
         env_contribution: env_contrib,
         seal_contribution: 0,
+        declared_outputs: &[],
         sorted_input_content_hashes: &[0xaa, 0xbb],
     })
 }

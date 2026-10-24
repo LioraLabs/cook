@@ -91,6 +91,7 @@ fn materialize_coordinator() -> MaterializeCoordinator {
             command_hash: request.command_hash,
             env_contribution: request.env_contribution,
             seal_contribution: 0,
+            declared_outputs: &[],
             sorted_input_content_hashes: &request.input_content_hashes,
         });
         let artifact = artifact_key(&cloud, 0, "__cook_materialized_value__");

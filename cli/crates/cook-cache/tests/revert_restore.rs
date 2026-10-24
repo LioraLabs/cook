@@ -39,7 +39,7 @@ fn xxh(bytes: &[u8]) -> u64 {
     xxhash_rust::xxh3::xxh3_64(bytes)
 }
 
-fn key_for(hashes: &mut Vec<u64>) -> [u8; 32] {
+fn key_for(hashes: &mut Vec<u64>, declared: &[&str]) -> [u8; 32] {
     hashes.sort();
     cloud_key(&CloudKeyInputs {
         schema_version: CACHE_VERSION,
@@ -47,6 +47,7 @@ fn key_for(hashes: &mut Vec<u64>) -> [u8; 32] {
         command_hash: CMD_HASH,
         env_contribution: ENV_CONTRIB,
         seal_contribution: SEAL_CONTRIB,
+        declared_outputs: declared,
         sorted_input_content_hashes: hashes,
     })
 }
@@ -136,9 +137,9 @@ fn revert_restores_despite_stale_caller_output_names() {
     let backend = LocalBackend::new(store.path().to_path_buf());
 
     let declared = vec![xxh(MAIN_SRC)];
-    let declared_key = key_for(&mut declared.clone());
+    let declared_key = key_for(&mut declared.clone(), &["build/*.txt"]);
     let mut full = vec![xxh(MAIN_SRC), xxh(HEADER_ORIG)];
-    let full_key = key_for(&mut full);
+    let full_key = key_for(&mut full, &["build/*.txt"]);
 
     // Multi-set manifest: one known discovered set.
     put_json_artifact(
@@ -199,10 +200,10 @@ fn revert_restores_older_discovered_set() {
 
     let header_b: &[u8] = b"header b\n";
     let declared = vec![xxh(MAIN_SRC)];
-    let declared_key = key_for(&mut declared.clone());
+    let declared_key = key_for(&mut declared.clone(), &["out.txt"]);
     // K1 = the ORIGINAL build: discovered set {header.h} at original content.
     let mut full = vec![xxh(MAIN_SRC), xxh(HEADER_ORIG)];
-    let full_key = key_for(&mut full);
+    let full_key = key_for(&mut full, &["out.txt"]);
 
     // Sets manifest newest-first: the edited build discovered {header.h,
     // header_b.h}; the original discovered {header.h}.
@@ -257,9 +258,9 @@ fn v1_single_set_manifest_still_recovers() {
     let backend = LocalBackend::new(store.path().to_path_buf());
 
     let declared = vec![xxh(MAIN_SRC)];
-    let declared_key = key_for(&mut declared.clone());
+    let declared_key = key_for(&mut declared.clone(), &["out.txt"]);
     let mut full = vec![xxh(MAIN_SRC), xxh(HEADER_ORIG)];
-    let full_key = key_for(&mut full);
+    let full_key = key_for(&mut full, &["out.txt"]);
 
     // v1 manifest ONLY (old producer): a flat path list.
     put_json_artifact(

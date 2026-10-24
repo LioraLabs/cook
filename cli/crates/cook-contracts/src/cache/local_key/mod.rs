@@ -14,11 +14,13 @@
 
 /// The marker that opens an observing unit's identity (§17.1.1.1, CS-0186).
 ///
-/// Producing keys are a declared output path, optionally suffixed with the env
-/// contribution. Observing keys are a digest, and the two share one index, so
-/// the digest is written in a form no declared output path takes. `:` is not a
-/// path separator on any supported platform and a workspace-relative output
-/// beginning with one is not a path any Cookfile writes.
+/// Producing keys are a declared output path (digest-suffixed when the unit
+/// declares more than one, see [`producing_identity`]), optionally suffixed
+/// with the env contribution. Observing keys are a digest, and the two share
+/// one index, so the digest is written in a form no declared output path
+/// takes. `:` is not a path separator on any supported platform and a
+/// workspace-relative output beginning with one is not a path any Cookfile
+/// writes.
 ///
 /// A collision would not be a correctness failure — the two units' output
 /// counts disagree, so each is judged stale against the other's record and
@@ -45,10 +47,8 @@ pub fn build_local_cache_key(
     env_contribution: u64,
     seal_keys: &std::collections::BTreeSet<String>,
 ) -> String {
-    let identity = match output_paths.first() {
-        // A producing unit is identified by a declared output path, which
-        // CS-0169 makes claimable by at most one unit.
-        Some(first) => first.clone(),
+    let identity = match producing_identity(output_paths) {
+        Some(identity) => identity,
         // An observing unit has no output path, so it is identified by a
         // digest of its DECLARATION (CS-0186).
         None => observing_identity(inputs, command_hash, seal_keys),
@@ -58,6 +58,33 @@ pub fn build_local_cache_key(
     } else {
         identity
     }
+}
+
+/// The identity of a unit that declares outputs, without its env suffix:
+/// `None` for an observing unit.
+///
+/// The first declared output path, which CS-0169 makes claimable by at most
+/// one unit. When the unit declares more than that one path, the rest of the
+/// declaration is a determinant the path alone does not carry (CS-0276): a
+/// record filed under `a.txt` for `cook "a.txt" "out/"` would otherwise be
+/// judged against `cook "a.txt" "dist/"` by its recorded concrete outputs,
+/// which all still exist, and replayed without `dist/` ever being produced.
+/// So the whole declaration, in declared order, is digested onto the path.
+///
+/// Exposed because the env-moved probe (`lookup_step`) must look for siblings
+/// of this identity, not of the bare first path.
+pub fn producing_identity(output_paths: &[String]) -> Option<String> {
+    let first = output_paths.first()?;
+    if output_paths.len() == 1 {
+        return Some(first.clone());
+    }
+    let mut hasher = xxhash_rust::xxh3::Xxh3::new();
+    for path in output_paths {
+        // NUL-terminated so ["ab", "c"] and ["a", "bc"] cannot hash alike.
+        hasher.update(path.as_bytes());
+        hasher.update(b"\0");
+    }
+    Some(format!("{first}{OBSERVING_KEY_MARKER}{:016x}", hasher.digest()))
 }
 
 /// The identity of a unit that declares no outputs: a digest over the paths it

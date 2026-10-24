@@ -784,19 +784,7 @@ fn resolve_unit_determinants(
 fn unit_key_hex(meta: &cook_contracts::CacheMeta, det: &UnitDeterminants) -> String {
     let mut sorted: Vec<u64> = det.inputs.values().copied().collect();
     sorted.sort();
-    let recipe_namespace = cook_cache::recipe_namespace(
-        &meta.project_id,
-        &meta.cookfile_path,
-        &meta.recipe_name,
-    );
-    let k = cook_cache::cloud_key(&cook_cache::CloudKeyInputs {
-        schema_version: crate::executor::cache_version(),
-        recipe_namespace: &recipe_namespace,
-        command_hash: det.command_hash,
-        env_contribution: det.env_contribution,
-        seal_contribution: det.seal_contribution,
-        sorted_input_content_hashes: &sorted,
-    });
+    let k = crate::executor::meta_cloud_key(meta, det.seal_contribution, &sorted);
     hex::encode(k)
 }
 

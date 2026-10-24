@@ -81,6 +81,7 @@ fn make_key_inputs() -> CloudKeyInputs<'static> {
         command_hash: 0xAAAA,
         env_contribution: 0xCCCC,
         seal_contribution: 0xDDDD,
+        declared_outputs: &[],
         sorted_input_content_hashes: &[0x1111, 0x2222, 0x3333],
     }
 }
@@ -145,6 +146,28 @@ fn cloud_key_caller_must_sort_inputs() {
     let c = CloudKeyInputs { sorted_input_content_hashes: &unsorted, ..a };
     assert_ne!(cloud_key(&b), cloud_key(&c),
         "the function does not internally sort; caller responsibility");
+}
+
+/// CS-0276: §{exec.cache.single-key} names the declared output paths as a
+/// determinant. Without them a declaration that grew was served the previous
+/// producer's outputs, which the manifest guard reads as covered.
+#[test]
+fn cloud_key_changes_on_output_declaration_change() {
+    let a = make_key_inputs();
+    let k = |outs: &[&str]| cloud_key(&CloudKeyInputs { declared_outputs: outs, ..a });
+    for (x, y) in [
+        (&["a.txt"][..], &["b.txt"][..]),
+        (&["dist/"], &["out/"]),
+        (&["dist/*.js"], &["dist/*.css"]),
+        (&["out"], &["out/"]),
+        (&["a.txt"], &["a.txt", "b.txt"]),
+        (&["a.txt", "b.txt"], &["b.txt", "a.txt"]),
+        (&["ab", "c"], &["a", "bc"]),
+        (&[], &["a.txt"]),
+    ] {
+        assert_ne!(k(x), k(y), "{x:?} and {y:?} must not share a key");
+    }
+    assert_eq!(k(&["dist/"]), k(&["dist/"]));
 }
 
 #[test]

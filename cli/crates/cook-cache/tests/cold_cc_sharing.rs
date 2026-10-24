@@ -61,6 +61,7 @@ fn seed_backend(backend: &LocalBackend, dep_h_bytes: &[u8]) {
         command_hash: CMD_HASH,
         env_contribution: ENV_CONTRIB,
         seal_contribution: SEAL_CONTRIB,
+        declared_outputs: &["build/main.o"],
         sorted_input_content_hashes: &declared_hashes,
     });
     let full_key = cloud_key(&CloudKeyInputs {
@@ -69,6 +70,7 @@ fn seed_backend(backend: &LocalBackend, dep_h_bytes: &[u8]) {
         command_hash: CMD_HASH,
         env_contribution: ENV_CONTRIB,
         seal_contribution: SEAL_CONTRIB,
+        declared_outputs: &["build/main.o"],
         sorted_input_content_hashes: &full_hashes,
     });
 
