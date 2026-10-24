@@ -118,6 +118,47 @@ fn local_backend_batch_query_returns_hits_subset() {
     assert!(hits.contains(&k3));
 }
 
+/// One presence rule: a key is in `batch_query` exactly when `get` would
+/// serve it, so a backfill never skips an entry every get misses.
+#[test]
+fn batch_query_presence_matches_get_for_every_sidecar_state() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let backend = LocalBackend::new(dir.path().to_path_buf());
+    let zero_sentinel = |sidecar: &std::path::Path| {
+        let mut m: ArtifactMeta =
+            serde_json::from_slice(&std::fs::read(sidecar).unwrap()).unwrap();
+        m.content_hash = ArtifactMeta::zero_content_hash();
+        std::fs::write(sidecar, serde_json::to_vec(&m).unwrap()).unwrap();
+    };
+    type Damage<'a> = &'a dyn Fn(&std::path::Path);
+    let cases: [(&str, u8, bool, Damage); 5] = [
+        ("healthy", 0x41, true, &|_| {}),
+        ("zero sentinel", 0x42, false, &|b| zero_sentinel(&b.with_extension("meta.json"))),
+        ("corrupt sidecar", 0x43, false, &|b| {
+            std::fs::write(b.with_extension("meta.json"), b"{ not json").unwrap()
+        }),
+        ("missing sidecar", 0x44, false, &|b| {
+            std::fs::remove_file(b.with_extension("meta.json")).unwrap()
+        }),
+        ("missing blob", 0x45, false, &|b| std::fs::remove_file(b).unwrap()),
+    ];
+    for (name, byte, present, damage) in cases {
+        let k = key(byte);
+        put_bytes(&backend, &k, b"bytes", &mut sample_meta()).expect("put");
+        damage(&backend.path_for(&k));
+        let queried = backend.batch_query(&[k]).expect("query").contains(&k);
+        let served = backend.get(&k).expect("get").is_some();
+        assert_eq!(queried, served, "{name}: batch_query and get disagree");
+        assert_eq!(queried, present, "{name}");
+        if !present {
+            // Backfill's re-put must heal every bad state.
+            put_bytes(&backend, &k, b"bytes", &mut sample_meta()).expect("re-put");
+            assert!(backend.batch_query(&[k]).expect("query").contains(&k), "{name}: re-put left it absent");
+            assert!(backend.get(&k).expect("get").is_some(), "{name}: re-put left get empty");
+        }
+    }
+}
+
 #[test]
 fn local_backend_delete_idempotent() {
     let dir = tempfile::tempdir().expect("tempdir");
