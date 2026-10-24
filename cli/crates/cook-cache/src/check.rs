@@ -268,6 +268,11 @@ fn check_inputs(
 pub struct RestoreCtx<'a> {
     pub backend: &'a dyn crate::cas_backend::CacheBackend,
     pub recipe_namespace: &'a str,
+    /// The unit's outputs as declared (patterns, not last run's names): every
+    /// restore stays inside them. A stored manifest naming a path they do not
+    /// cover is read as absent, and a symlink restores only pointing at a path
+    /// they cover ([`crate::declared_output_covers`]).
+    pub declared_outputs: &'a [&'a str],
 }
 
 /// Check if a cook layer (with output) needs to rebuild.
@@ -488,19 +493,46 @@ fn set_mode(abs: &Path, mode: u32) -> bool {
     true
 }
 
-/// Fold `.` and `..` components lexically WITHOUT touching the filesystem.
-/// `..` pops the last normal component (or is dropped at the root).
-fn normalize_lexical(p: &Path) -> std::path::PathBuf {
+/// Where `target`, read from the real directory `from`, points as the kernel
+/// would follow it now. Each `..` pops from the real path of what precedes it,
+/// so `y/..` through a symlink `y` goes where `y` goes, not back to `from` as a
+/// lexical fold says. `None` when a component before a `..` does not exist yet
+/// (a later restore could make it a link) or the target is absolute.
+fn resolve_target(from: &Path, target: &Path) -> Option<std::path::PathBuf> {
     use std::path::Component;
-    let mut out = std::path::PathBuf::new();
-    for c in p.components() {
+    let mut cur = from.to_path_buf();
+    for c in target.components() {
         match c {
-            Component::ParentDir => { out.pop(); }
+            Component::Normal(n) => cur.push(n),
             Component::CurDir => {}
-            other => out.push(other.as_os_str()),
+            Component::ParentDir => {
+                cur = cur.canonicalize().ok()?;
+                cur.pop();
+            }
+            Component::RootDir | Component::Prefix(_) => return None,
         }
     }
-    out
+    Some(cur)
+}
+
+/// Whether every existing directory on the way from `working_dir` down to
+/// `rel_dir` is a real directory, not a symlink. A restore writes only into
+/// directories it would have made itself: a link on the way — a user's own, or
+/// one this restore just made — could carry the write anywhere, inside the
+/// workspace or out. Symlink outputs are leaves, so no honest restore needs one.
+/// Removal holds to the same rule: removing through a link removes what it
+/// points to.
+pub fn no_link_on_the_way(working_dir: &Path, rel_dir: &Path) -> bool {
+    let mut cur = working_dir.to_path_buf();
+    for c in rel_dir.components() {
+        cur.push(c);
+        match std::fs::symlink_metadata(&cur) {
+            Ok(m) if m.file_type().is_symlink() => return false,
+            Ok(_) => {}
+            Err(_) => return true, // the rest is made by create_dir_all
+        }
+    }
+    true
 }
 
 /// Walk up `p`'s ancestors and return the longest one that exists on disk.
@@ -513,69 +545,75 @@ fn longest_existing_prefix(p: &Path) -> Option<std::path::PathBuf> {
     None
 }
 
-/// Create a symlink at `link` pointing to `target`, only if `target` cannot
-/// escape `anchor`. Ports Turborepo's four restore_symlink checks:
+/// Create a symlink at `link` pointing to `target`, only if `target` lands on
+/// a path the unit's `declared` outputs cover — not merely somewhere in
+/// `working_dir`: a link inside an output directory pointing at `..` or
+/// `../src` would hand the rest of the workspace to whatever walks, records or
+/// sweeps that directory next. Checks, after Turborepo's restore_symlink:
 ///   (1) reject absolute targets;
-///   (2) lexically resolve `target` against the link's parent and require the
-///       result stays within `anchor`;
-///   (3) realpath the longest existing prefix of the resolved target and
-///       require it stays within the real anchor (defends symlink-then-write
-///       escapes);
+///   (2) resolve `target` against the link's real parent, following what
+///       exists before each `..` ([`resolve_target`]);
+///   (3) realpath the longest existing prefix of that, append the rest, and
+///       require the result, relative to the real `working_dir`, to be
+///       [`restorable`] and covered by `declared` — so a link already on the
+///       way to the target cannot carry it elsewhere;
 ///   (4) only then create the link.
+/// Whether it reaches a file is judged once the whole restore is down
+/// ([`restored_links_reach_files`]): its target may be restored after it.
 /// Returns false on any rejection or OS error.
 #[cfg(unix)]
-fn restore_symlink_checked(anchor: &Path, link: &Path, target: &str) -> bool {
-    let t = Path::new(target);
-    // (1) Reject absolute targets.
-    if t.is_absolute() {
-        tracing::warn!(
-            "cache restore: symlink target {:?} escapes output anchor (absolute path); treating as miss",
-            target
-        );
-        return false;
-    }
-    let parent = match link.parent() {
-        Some(p) => p,
-        None => return false,
-    };
-    // (2) Lexically resolve target against link's parent directory and verify
-    // the result stays within the anchor.
-    let lexical = normalize_lexical(&parent.join(t));
-    let real_anchor = anchor.canonicalize().unwrap_or_else(|_| normalize_lexical(anchor));
-    let lexical_anchor = normalize_lexical(anchor);
-    if !(lexical.starts_with(&real_anchor) || lexical.starts_with(&lexical_anchor)) {
-        tracing::warn!(
-            "cache restore: symlink target {:?} escapes output anchor (lexical escape); treating as miss",
-            target
-        );
-        return false;
-    }
-    // (3) Realpath the longest existing prefix of the resolved target.
-    if let Some(existing) = longest_existing_prefix(&lexical) {
-        match existing.canonicalize() {
-            Ok(real) if real.starts_with(&real_anchor) => {}
-            _ => {
-                tracing::warn!(
-                    "cache restore: symlink target {:?} escapes output anchor (realpath escape); treating as miss",
-                    target
-                );
-                return false;
-            }
+fn restore_symlink_checked(working_dir: &Path, declared: &[&str], link: &Path, target: &str) -> bool {
+    let landed = (|| {
+        let t = Path::new(target);
+        if t.is_absolute() {
+            return None;
         }
+        let resolved = resolve_target(&link.parent()?.canonicalize().ok()?, t)?;
+        let existing = longest_existing_prefix(&resolved)?;
+        let real = existing.canonicalize().ok()?.join(resolved.strip_prefix(&existing).ok()?);
+        let rel = real.strip_prefix(working_dir.canonicalize().ok()?).ok()?.to_str()?.to_string();
+        Some(restorable(&rel) && crate::declared_output_covers(declared, &rel))
+    })();
+    if landed != Some(true) {
+        tracing::warn!(
+            "cache restore: symlink target {target:?} does not land on one of the unit's declared outputs; treating as miss"
+        );
+        return false;
     }
-    // (4) Create the link.
     std::os::unix::fs::symlink(target, link).is_ok()
 }
 
 #[cfg(not(unix))]
-fn restore_symlink_checked(anchor: &Path, link: &Path, target: &str) -> bool {
-    let _ = (anchor, link, target);
+fn restore_symlink_checked(working_dir: &Path, declared: &[&str], link: &Path, target: &str) -> bool {
+    let _ = (working_dir, declared, link, target);
     false
 }
 
-/// Materialise one cached artifact at `abs`, faithful to its recorded kind +
-/// mode. `anchor` is the restore boundary for symlink hardening (enforced by
-/// `restore_symlink_checked`). `expected_content_hash`, when `Some`, pins the restored *file*
+/// Whether a restore may write `rel` under the working directory, by its
+/// names alone: plain names, at least one, after at most one leading `./`. No
+/// absolute path or prefix, no `..`, no `.` or empty segment, and no `.git`
+/// anywhere: a recorded output never carries one, and one that stays inside by
+/// its names still lets a pattern cover more than it says — `out/**` covers
+/// `out/../Cookfile` and `out/./x`, `src/*` covers `src/.` (the directory
+/// itself, which a dir artifact would chmod), a root `**` covers
+/// `.git/hooks/pre-commit`. The one rule for every restore and for accepting a
+/// stored manifest's output list (§17.2: the store is untrusted). Symlinks on
+/// the way are not visible in names; `restore_one` refuses those against the
+/// real directories.
+pub fn restorable(rel: &str) -> bool {
+    use std::path::Component;
+    let rel = cook_contracts::pathlaw::strip_dot_slash(rel);
+    Path::new(rel).components().all(|c| matches!(c, Component::Normal(_)))
+        && rel.split('/').all(|seg| !matches!(seg, "" | "." | "..") && !seg.eq_ignore_ascii_case(".git"))
+}
+
+/// Materialise one cached artifact at `rel` under `working_dir`, faithful to
+/// its recorded kind + mode. A `rel` that is not [`restorable`] is a miss,
+/// whatever its source (local record, manifest or declaration), and so is one
+/// with a symlink among its directories ([`no_link_on_the_way`]), or a
+/// directory artifact landing on a symlink.
+/// `working_dir` is also the restore boundary for symlink hardening (enforced
+/// by `restore_symlink_checked`). `expected_content_hash`, when `Some`, pins the restored *file*
 /// bytes to the locally-trusted `StepEntry` content hash (xxh3) BEFORE they
 /// touch the workspace — this is the warm-path defence against a shared backend
 /// that rewrites BOTH the artifact bytes and its sidecar (the both-rewritten
@@ -598,10 +636,25 @@ fn restore_symlink_checked(anchor: &Path, link: &Path, target: &str) -> bool {
 fn restore_one(
     backend: &dyn crate::cas_backend::CacheBackend,
     artifact_k: &crate::cas_backend::CloudKey,
-    abs: &Path,
-    anchor: &Path,
+    rel: &str,
+    working_dir: &Path,
+    declared: &[&str],
     expected_content_hash: Option<u64>,
 ) -> bool {
+    if !restorable(rel) {
+        tracing::warn!(
+            "cache restore: output path {rel:?} does not stay inside the working directory; treating as miss"
+        );
+        return false;
+    }
+    // Without a leading `./`, so the checks below see a link at its end.
+    let rel_path = cook_contracts::pathlaw::normalize(Path::new(rel));
+    let abs = &working_dir.join(&rel_path);
+    let unlinked = || no_link_on_the_way(working_dir, rel_path.parent().unwrap_or(Path::new("")));
+    if !unlinked() {
+        tracing::warn!("cache restore: output path {rel:?} leads through a symlink; treating as miss");
+        return false;
+    }
     // `get_with_meta` returns a `VerifyingReader`: draining it surfaces any
     // bytes-vs-sidecar tampering as an `io::Error` at EOF (treated as a miss).
     let (mut reader, meta) = match backend.get_with_meta(artifact_k) {
@@ -609,11 +662,17 @@ fn restore_one(
         _ => return false,
     };
     if let Some(parent) = abs.parent() {
-        if std::fs::create_dir_all(parent).is_err() {
+        if std::fs::create_dir_all(parent).is_err() || !unlinked() {
             return false;
         }
     }
     match meta.kind.as_deref() {
+        // A dir onto an existing link would chmod wherever the link points.
+        Some(artifact_kind::DIR)
+            if std::fs::symlink_metadata(abs).is_ok_and(|m| m.file_type().is_symlink()) =>
+        {
+            false
+        }
         Some(artifact_kind::DIR) => {
             if std::fs::create_dir_all(abs).is_err() {
                 return false;
@@ -625,7 +684,7 @@ fn restore_one(
                 Some(t) => t,
                 None => return false,
             };
-            restore_symlink_checked(anchor, abs, target)
+            restore_symlink_checked(working_dir, declared, abs, target)
         }
         _ => {
             // Stream blob -> tmp, hashing as the bytes flow: an artifact can be
@@ -635,7 +694,9 @@ fn restore_one(
             // output path.
             let tmp = abs.with_extension("cook.tmp");
             let copied = (|| {
-                let mut out = std::fs::File::create(&tmp).ok()?;
+                // A fresh file, never one a planted link at the temp name points to.
+                let _ = std::fs::remove_file(&tmp);
+                let mut out = std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp).ok()?;
                 let mut hasher = xxhash_rust::xxh3::Xxh3::new();
                 let mut buf = [0u8; 64 * 1024];
                 loop {
@@ -701,32 +762,52 @@ fn try_restore(
     for &idx in needs_restore {
         let path = current_outputs[idx];
         let artifact_k = crate::cas_backend::artifact_key(&cloud_k, idx as u32, path);
-        let abs = working_dir.join(path);
         if !restore_one(
             ctx.backend,
             &artifact_k,
-            &abs,
+            path,
             working_dir,
+            ctx.declared_outputs,
             Some(entry.outputs[idx].hash),
         ) {
             pending.push(idx);
         }
     }
-    for idx in pending {
+    let restored = pending.into_iter().all(|idx| {
         let path = current_outputs[idx];
         let artifact_k = crate::cas_backend::artifact_key(&cloud_k, idx as u32, path);
-        let abs = working_dir.join(path);
-        if !restore_one(
+        restore_one(
             ctx.backend,
             &artifact_k,
-            &abs,
+            path,
             working_dir,
+            ctx.declared_outputs,
             Some(entry.outputs[idx].hash),
-        ) {
-            return false;
+        )
+    });
+    let links_ok = restored_links_reach_files(working_dir, needs_restore.iter().map(|&i| current_outputs[i]));
+    restored && links_ok
+}
+
+/// Every link among the just-restored `paths` must reach a regular file; one
+/// that reaches a directory, dangles or loops is removed and the restore is a
+/// miss. An honest record never holds one — recording such an output fails —
+/// and links to directories (`out/a/x -> ../b` beside `out/b/y -> ../a`) are
+/// how a store makes every walk that follows links over the output loop.
+/// Judged after the whole restore, as the kernel follows them then: a link's
+/// target can itself be restored, as a link or a directory, after it.
+fn restored_links_reach_files<'a>(working_dir: &Path, paths: impl Iterator<Item = &'a str>) -> bool {
+    let mut ok = true;
+    for rel in paths.filter(|rel| restorable(rel)) {
+        let abs = working_dir.join(cook_contracts::pathlaw::normalize(Path::new(rel)));
+        let is_link = std::fs::symlink_metadata(&abs).is_ok_and(|m| m.file_type().is_symlink());
+        if is_link && !std::fs::metadata(&abs).is_ok_and(|m| m.is_file()) {
+            tracing::warn!("cache restore: symlink {rel:?} does not reach a file; treating as miss");
+            let _ = std::fs::remove_file(&abs);
+            ok = false;
         }
     }
-    true
+    ok
 }
 
 /// COOK-278: the result of a successful [`fetch_by_key`] restore. The caller
@@ -919,7 +1000,8 @@ pub fn fetch_observation(
 /// the caller list is only a fallback for stores written before the
 /// determinant manifest existed. This also lifts the old "glob outputs cannot
 /// cold-fetch" limitation: raw patterns in `output_paths` simply never match
-/// an artifact, but the manifest-driven list does.
+/// an artifact, but the manifest-driven list does. A manifest listing anything
+/// `ctx.declared_outputs` does not cover is read as absent.
 #[allow(clippy::too_many_arguments)]
 pub fn fetch_by_key(
     ctx: &RestoreCtx,
@@ -998,21 +1080,15 @@ pub fn fetch_by_key(
         // COOK-278: prefer the candidate key's own recorded output list over
         // the caller's (possibly stale) one. Index order mirrors publish:
         // files, implicit depfile, empty dirs.
+        let depfile = discovered_inputs.map(|di| di.from.as_str());
         let (restore_list, observation): (Vec<String>, Option<_>) =
-            match ctx.backend.get_manifest(&cloud_k) {
-            Ok(Some(m)) => {
-                let mut list = m.output_paths;
-                if let Some(di) = discovered_inputs {
-                    list.push(di.from.clone());
-                }
-                list.extend(m.empty_dir_outputs);
-                    (list, m.observation)
-            }
-                _ => (
-                    output_paths.iter().map(|s| (*s).to_string()).collect(),
-                    None,
-                ),
-        };
+            match ctx.backend.get_manifest(&cloud_k).ok().flatten() {
+                Some(m) => match manifest_outputs(&cloud_k, &m, depfile, ctx.declared_outputs) {
+                    Some(list) => (list, m.observation),
+                    None => (output_paths.iter().map(|s| (*s).to_string()).collect(), None),
+                },
+                None => (output_paths.iter().map(|s| (*s).to_string()).collect(), None),
+            };
         if restore_all(ctx, &cloud_k, &restore_list, working_dir) {
             return Some(FetchOutcome {
                 restored_outputs: restore_list,
@@ -1023,6 +1099,34 @@ pub fn fetch_by_key(
         }
     }
     None
+}
+
+/// The outputs a key's determinant manifest says to restore, in publish index
+/// order: files, the implicit depfile (`depfile`, from the local
+/// declaration), recorded empty dirs. `None` — the manifest is treated as
+/// absent — when any recorded path is not [`restorable`] or is not one the
+/// unit's own `declared_outputs` name ([`crate::declared_output_covers`]): a
+/// stored manifest is untrusted, and one naming a path outside the working
+/// directory, or inside it but outside what the unit declares (a git hook, the
+/// Cookfile), is forged. The warning names the key only, never the stored path.
+pub fn manifest_outputs(
+    key: &crate::cas_backend::CloudKey,
+    m: &crate::cas_backend::DeterminantManifest,
+    depfile: Option<&str>,
+    declared_outputs: &[&str],
+) -> Option<Vec<String>> {
+    let ours = |p: &String| restorable(p) && crate::declared_output_covers(declared_outputs, p);
+    if !m.output_paths.iter().chain(&m.empty_dir_outputs).all(ours) {
+        tracing::warn!(
+            "cache manifest for key {}: an output path is not one this unit declares; treating the manifest as absent",
+            hex::encode(key)
+        );
+        return None;
+    }
+    let mut list = m.output_paths.clone();
+    list.extend(depfile.map(str::to_string));
+    list.extend(m.empty_dir_outputs.iter().cloned());
+    Some(list)
 }
 
 /// Two-pass restore (symlink-last), mirroring `try_restore`. The fetch path
@@ -1038,20 +1142,17 @@ fn restore_all(
     let mut pending: Vec<usize> = Vec::new();
     for (idx, path) in paths.iter().enumerate() {
         let artifact_k = crate::cas_backend::artifact_key(cloud_k, idx as u32, path);
-        let abs = working_dir.join(path);
-        if !restore_one(ctx.backend, &artifact_k, &abs, working_dir, None) {
+        if !restore_one(ctx.backend, &artifact_k, path, working_dir, ctx.declared_outputs, None) {
             pending.push(idx);
         }
     }
-    for idx in pending {
+    let restored = pending.into_iter().all(|idx| {
         let path = &paths[idx];
         let artifact_k = crate::cas_backend::artifact_key(cloud_k, idx as u32, path);
-        let abs = working_dir.join(path);
-        if !restore_one(ctx.backend, &artifact_k, &abs, working_dir, None) {
-            return false;
-        }
-    }
-    true
+        restore_one(ctx.backend, &artifact_k, path, working_dir, ctx.declared_outputs, None)
+    });
+    let links_ok = restored_links_reach_files(working_dir, paths.iter().map(String::as_str));
+    restored && links_ok
 }
 
 /// Hash each declared input path's on-disk content, sorted ascending. Returns

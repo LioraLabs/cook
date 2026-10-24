@@ -29,6 +29,7 @@ pub mod cache_ctx;
 pub mod cas_backend;
 pub mod check;
 pub mod cloud_backend;
+mod manifest_wire;
 pub mod cloud_config;
 pub mod depfile;
 mod http1;
@@ -48,8 +49,9 @@ pub use depfile::{DepfileError, parse_make_depfile};
 pub use cas_backend::{BackendConfig, BackendError, BackendResult, CacheBackend};
 pub use check::{
     FetchOutcome, RebuildReason, RebuildResult, RestoreCtx, fetch_by_key, fetch_observation,
-    hash_env, hash_file, hash_input_paths, hash_reader, needs_rebuild_cook,
-    read_discovered_input_sets, read_module_input_sets, shared_observation, stat_mtime,
+    hash_env, hash_file, hash_input_paths, hash_reader, manifest_outputs, needs_rebuild_cook, no_link_on_the_way,
+    read_discovered_input_sets, read_module_input_sets, restorable, shared_observation,
+    stat_mtime,
 };
 pub use cook_contracts::cache::cas::{
     ArtifactMeta, CloudKey, CloudKeyInputs, DISCOVERED_INPUT_SETS_CAP, DISCOVERED_INPUT_SETS_INDEX,
@@ -74,8 +76,8 @@ pub use probe::{
     tool_identity,
 };
 pub use resolve::{
-    empty_dirs_under, normalize_glob_pattern, reconcile_dir_output, resolve_declared_inputs,
-    resolve_gather_glob, resolve_glob,
+    declared_output_covers, empty_dirs_under, normalize_glob_pattern, reconcile_dir_output, remove_stale_outputs, resolve_declared_inputs,
+    resolve_gather_glob, resolve_glob, resolve_output_glob,
 };
 pub use statmemo::{stat_mtime_memo, tool_hash_memo};
 

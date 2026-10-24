@@ -102,6 +102,7 @@ fn restore_on_hit_writes_bytes_back_to_disk_and_returns_skip() {
     let ctx = RestoreCtx {
         backend: backend.as_ref(),
         recipe_namespace,
+        declared_outputs: &["**"],
     };
     let (result, _) = needs_rebuild_cook(
         Some(&entry),
@@ -160,6 +161,7 @@ fn restore_miss_falls_through_to_output_changed() {
     let ctx = RestoreCtx {
         backend: backend.as_ref(),
         recipe_namespace: "proj/Cookfile::build",
+        declared_outputs: &["**"],
     };
     let (result, _) = needs_rebuild_cook(
         Some(&entry),
@@ -268,6 +270,7 @@ fn restore_rejects_tampered_backend_bytes() {
     let ctx = RestoreCtx {
         backend: backend.as_ref(),
         recipe_namespace,
+        declared_outputs: &["**"],
     };
     let (result, updated) = needs_rebuild_cook(
         Some(&entry),

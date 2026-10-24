@@ -112,6 +112,7 @@ fn multi_output_restore_writes_all_outputs() {
     let ctx = RestoreCtx {
         backend: backend.as_ref(),
         recipe_namespace,
+        declared_outputs: &["**"],
     };
     let (result, _) = needs_rebuild_cook(
         Some(&entry),
@@ -203,6 +204,7 @@ fn multi_output_partial_miss_falls_back_to_rebuild() {
     let ctx = RestoreCtx {
         backend: backend.as_ref(),
         recipe_namespace,
+        declared_outputs: &["**"],
     };
     let (result, _) = needs_rebuild_cook(
         Some(&entry),

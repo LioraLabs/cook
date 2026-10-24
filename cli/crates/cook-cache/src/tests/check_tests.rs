@@ -951,7 +951,7 @@ fn restore_one_materialises_file_and_symlink() {
     let wd = tmp.path().join("wd");
     std::fs::create_dir_all(&wd).unwrap();
 
-    assert!(restore_one(&backend, &file_key, &wd.join("bin/run"), &wd, None));
+    assert!(restore_one(&backend, &file_key, "bin/run", &wd, &["bin/"], None));
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -961,7 +961,7 @@ fn restore_one_materialises_file_and_symlink() {
 
     #[cfg(unix)]
     {
-        assert!(restore_one(&backend, &symlink_key, &wd.join("bin/run-link"), &wd, None));
+        assert!(restore_one(&backend, &symlink_key, "bin/run-link", &wd, &["bin/"], None));
         assert!(std::fs::symlink_metadata(wd.join("bin/run-link"))
             .unwrap()
             .file_type()
@@ -981,13 +981,13 @@ fn symlink_hardening_rejects_escapes() {
     let link = anchor.join("sub/link");
     std::fs::create_dir_all(link.parent().unwrap()).unwrap();
     // absolute target rejected
-    assert!(!restore_symlink_checked(anchor, &link, "/etc/passwd"));
+    assert!(!restore_symlink_checked(anchor, &["**"], &link, "/etc/passwd"));
     assert!(!link.exists());
     // parent-escape rejected
-    assert!(!restore_symlink_checked(anchor, &link, "../../etc/passwd"));
+    assert!(!restore_symlink_checked(anchor, &["**"], &link, "../../etc/passwd"));
     assert!(!std::fs::symlink_metadata(&link).map(|m| m.file_type().is_symlink()).unwrap_or(false));
     // sibling within anchor accepted
-    assert!(restore_symlink_checked(anchor, &link, "sib"));
+    assert!(restore_symlink_checked(anchor, &["**"], &link, "sib"));
     assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
 }
 
@@ -1000,7 +1000,7 @@ fn symlink_hardening_allows_reentrant_within_anchor() {
     std::fs::create_dir_all(link.parent().unwrap()).unwrap();
     std::fs::create_dir_all(anchor.join("sub2")).unwrap();
     // target `../sub2/x` from link-parent `sub/` resolves to `sub2/x` under anchor
-    assert!(restore_symlink_checked(anchor, &link, "../sub2/x"));
+    assert!(restore_symlink_checked(anchor, &["**"], &link, "../sub2/x"));
     assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
 }
 

@@ -231,13 +231,52 @@ pub fn reconcile_dir_output(working_dir: &Path, root: &str, kept: &BTreeSet<Stri
     // be trusted afterwards.
     statmemo::disarm();
     let root = root.trim_end_matches('/');
-    let present = resolve_glob(working_dir, &format!("{root}/**/*"));
+    // A link in the subtree is an entry: removing it removes the link, never
+    // what it points to.
+    let present = resolve_output_glob(working_dir, &format!("{root}/**/*"));
     for rel in &present {
         if !kept.contains(rel) {
             let _ = std::fs::remove_file(working_dir.join(rel));
         }
     }
     prune_empty_dirs_keeping(&working_dir.join(root), working_dir, kept);
+}
+
+/// Sweep the previously recorded outputs `prior` that a restore did not
+/// rewrite (`kept`), so a fetch hit is byte-identical to a fresh build.
+pub fn remove_stale_outputs<'a>(working_dir: &Path, prior: impl IntoIterator<Item = &'a str>, kept: &BTreeSet<&str>) {
+    let prior: Vec<&str> = prior.into_iter().collect();
+    let stale = || {
+        prior
+            .iter()
+            .filter(|rec| !kept.contains(**rec))
+            // Nothing through a link: an older record may name a
+            // file reached through one, which is not ours.
+            .filter(|rec| {
+                let rel = Path::new(**rec);
+                crate::no_link_on_the_way(working_dir, rel.parent().unwrap_or(rel))
+            })
+            .map(|rec| working_dir.join(rec))
+            // The entry itself: a link to a directory is removed as a file.
+            .filter_map(|abs| {
+                let dir = std::fs::symlink_metadata(&abs).ok()?.is_dir();
+                Some((abs, dir))
+            })
+    };
+    // Files first, then empty dirs (`remove_dir`, not `_all`): a
+    // stale dir record whose subtree gained restored files must
+    // survive — non-empty removal fails and that is correct.
+    statmemo::disarm();
+    for (abs, dir) in stale() {
+        if !dir {
+            let _ = std::fs::remove_file(&abs);
+        }
+    }
+    for (abs, dir) in stale() {
+        if dir {
+            let _ = std::fs::remove_dir(&abs);
+        }
+    }
 }
 
 /// Workspace-relative paths of every EMPTY directory at or under `root`
@@ -320,6 +359,65 @@ fn prune_empty_dirs_keeping(dir: &Path, working_dir: &Path, kept: &BTreeSet<Stri
         }
     }
     empty
+}
+
+/// Whether `path`, a concrete output some run recorded, is one `declared`
+/// names: a literal equal to it, or a match of a glob or directory output
+/// under the pattern semantics [`resolve_glob`] walks with (`*` stays within a
+/// component, `**` crosses them; a directory output covers everything under
+/// it). A stored record naming any other path is not this unit's to restore.
+pub fn declared_output_covers(declared: &[&str], path: &str) -> bool {
+    declared.iter().any(|d| {
+        *d == path
+            || (cook_contracts::pathlaw::is_terminal_output(d)
+                && glob::Pattern::new(&normalize_glob_pattern(d)).is_ok_and(|p| p.matches_with(path, OUTPUT_MATCH)))
+    })
+}
+
+/// How an output pattern matches a path, for walking and for coverage alike:
+/// `glob::glob`'s own options (case-sensitive, `*` matches a leading dot),
+/// with `*` held to one component as `glob::glob`'s per-directory walk holds it.
+const OUTPUT_MATCH: glob::MatchOptions =
+    glob::MatchOptions { case_sensitive: true, require_literal_separator: true, require_literal_leading_dot: false };
+
+/// [`resolve_glob`] for a unit's outputs, which cook records, uploads and
+/// deletes: the walk never enters a symbolic link. A link is an entry of its
+/// own, matched by its name like a file, whatever it points to; real
+/// directories are dropped as `resolve_glob` drops them. Following one would
+/// make everything it reaches (`out/h -> ..`: the workspace, `.git` included)
+/// look like this unit's output. The pattern's literal leading directories are
+/// the declaration's own and are opened as named, link or not.
+pub fn resolve_output_glob(root: &Path, pattern: &str) -> BTreeSet<String> {
+    fn walk(root: &Path, dir: &str, depth: usize, pat: &glob::Pattern, out: &mut BTreeSet<String>) {
+        let Ok(entries) = std::fs::read_dir(root.join(dir)) else { return };
+        for e in entries.flatten() {
+            let Some(name) = e.file_name().to_str().map(str::to_string) else { continue };
+            let rel = if dir.is_empty() { name } else { format!("{dir}/{name}") };
+            // `DirEntry::file_type` does not follow a link.
+            match e.file_type() {
+                Ok(t) if t.is_dir() => {
+                    if depth > 1 {
+                        walk(root, &rel, depth - 1, pat, out);
+                    }
+                }
+                Ok(_) if pat.matches_with(&rel, OUTPUT_MATCH) => {
+                    out.insert(rel);
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut out = BTreeSet::new();
+    let Ok(pat) = glob::Pattern::new(pattern) else { return out };
+    let parts: Vec<&str> = pattern.split('/').collect();
+    let literal = parts.iter().take_while(|c| !cook_contracts::pathlaw::has_glob_meta(c)).count();
+    if literal == parts.len() {
+        return resolve_glob(root, pattern); // not a pattern: the one path, as named
+    }
+    // Without `**` nothing deeper than the pattern's own components can match.
+    let depth = if parts[literal..].contains(&"**") { usize::MAX } else { parts.len() - literal };
+    walk(root, &parts[..literal].join("/"), depth, &pat, &mut out);
+    out
 }
 
 /// Helper to resolve a glob pattern into a set of files.

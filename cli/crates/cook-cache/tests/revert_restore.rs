@@ -159,7 +159,7 @@ fn revert_restores_despite_stale_caller_output_names() {
     std::fs::write(wd.join("main.src"), MAIN_SRC).unwrap();
     std::fs::write(wd.join("header.h"), HEADER_ORIG).unwrap();
 
-    let ctx = RestoreCtx { backend: &backend, recipe_namespace: RECIPE_NS };
+    let ctx = RestoreCtx { backend: &backend, recipe_namespace: RECIPE_NS, declared_outputs: &["build/*.txt"] };
     let outcome = fetch_by_key(
         &ctx,
         CMD_HASH,
@@ -229,7 +229,7 @@ fn revert_restores_older_discovered_set() {
     std::fs::write(wd.join("header.h"), HEADER_ORIG).unwrap();
     std::fs::write(wd.join("header_b.h"), header_b).unwrap();
 
-    let ctx = RestoreCtx { backend: &backend, recipe_namespace: RECIPE_NS };
+    let ctx = RestoreCtx { backend: &backend, recipe_namespace: RECIPE_NS, declared_outputs: &["out.txt"] };
     let outcome = fetch_by_key(
         &ctx,
         CMD_HASH,
@@ -282,7 +282,7 @@ fn v1_single_set_manifest_still_recovers() {
     std::fs::write(wd.join("main.src"), MAIN_SRC).unwrap();
     std::fs::write(wd.join("header.h"), HEADER_ORIG).unwrap();
 
-    let ctx = RestoreCtx { backend: &backend, recipe_namespace: RECIPE_NS };
+    let ctx = RestoreCtx { backend: &backend, recipe_namespace: RECIPE_NS, declared_outputs: &["out.txt"] };
     // No determinant manifest seeded → falls back to the caller's output
     // list, exactly the pre-COOK-278 behaviour.
     let outcome = fetch_by_key(

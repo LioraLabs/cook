@@ -13,6 +13,10 @@
 //! - `PUT /v1/artifacts/{key_hex}` — bytes streamed from caller; same
 //!   `X-Cook-*` headers; client enforces `max_artifact_bytes` mid-stream.
 //! - `DELETE /v1/artifacts/{key_hex}` — 204 success, 404 idempotent success.
+//! - `GET /v1/manifests/{key_hex}` — the unit's `DeterminantManifest` as
+//!   JSON, or 404 (also what a server without the route answers).
+//! - `PUT /v1/manifests/{key_hex}` — JSON `DeterminantManifest` whose `key`
+//!   is `{key_hex}`; last writer wins (no 409).
 //! - `GET /v1/health` — 200 healthy, anything else `Transient`.
 //!
 //! ## Retry policy (CS-0057 `BackendConfig`)
@@ -30,6 +34,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::backend::VerifyingReader;
+use crate::manifest_wire::{decode_manifest, ManifestRefusal, MANIFESTS_PATH};
 use crate::backend::{
     ArtifactMeta, BackendConfig, BackendError, BackendResult, CacheBackend, CloudKey,
     DeterminantManifest,
@@ -80,6 +85,11 @@ impl CloudBackend {
     /// Compose the URL for an artifact key.
     fn artifact_url(&self, key: &CloudKey) -> String {
         format!("{}/v1/artifacts/{}", self.endpoint, hex::encode(key))
+    }
+
+    /// Compose the URL for a unit's determinant manifest.
+    fn manifest_url(&self, key: &CloudKey) -> String {
+        format!("{}{MANIFESTS_PATH}{}", self.endpoint, hex::encode(key))
     }
 
     /// Compose the URL for the batch_query endpoint.
@@ -142,6 +152,9 @@ fn map_status_error(
         )),
         413 if ctx == "batch_query" => BackendError::Other(format!(
             "server rejected oversize batch_query request: {body}"
+        )),
+        413 if ctx == "put_manifest" => BackendError::Other(format!(
+            "server rejected oversize manifest at {ctx}: {body}"
         )),
         413 => BackendError::Other(format!(
             "server rejected oversize artifact at {ctx}: {body}"
@@ -529,22 +542,45 @@ impl CacheBackend for CloudBackend {
         })
     }
 
-    /// COOK-166 / CS-0110: the determinant manifest is local-filesystem
-    /// diagnostic data (a `provenance.json` sidecar). The cloud backend has
-    /// no manifest endpoint yet (producer-attestation upload is deferred to
-    /// M2); this is a no-op so a manifest never blocks a build.
-    fn put_manifest(
-        &self,
-        _key: &CloudKey,
-        _manifest: &DeterminantManifest,
-    ) -> BackendResult<()> {
-        Ok(())
+    /// The manifest is serialized once and PUT from memory, so a transient
+    /// failure is retried like any other idempotent call.
+    fn put_manifest(&self, key: &CloudKey, manifest: &DeterminantManifest) -> BackendResult<()> {
+        let body = serde_json::to_vec(manifest)
+            .map_err(|e| BackendError::Other(format!("serialize manifest: {e}")))?;
+        let url = self.manifest_url(key);
+        let auth = self.auth_header();
+        retry_loop(&self.config, || {
+            self.client
+                .put(&url)
+                .set("Authorization", &auth)
+                .set("Content-Type", "application/json")
+                .send_bytes(&body)
+                .map(|_| ())
+                .map_err(|e| map_ureq_error(e, "put_manifest"))
+        })
     }
 
-    /// No manifest endpoint yet — a cloud miss is the absence case, never an
-    /// error.
-    fn get_manifest(&self, _key: &CloudKey) -> BackendResult<Option<DeterminantManifest>> {
-        Ok(None)
+    /// 404 is the absence case, and what a server without the route answers.
+    /// A body that does not decode is absence too, never an error.
+    fn get_manifest(&self, key: &CloudKey) -> BackendResult<Option<DeterminantManifest>> {
+        let url = self.manifest_url(key);
+        let auth = self.auth_header();
+        retry_loop(&self.config, || {
+            match self.client.get(&url).set("Authorization", &auth).call() {
+                Ok(response) => match decode_manifest(key, response.into_reader()) {
+                    Ok(m) => Ok(Some(m)),
+                    Err(ManifestRefusal::Io(why)) => {
+                        Err(BackendError::Transient(format!("get_manifest: {why}")))
+                    }
+                    Err(why) => {
+                        tracing::warn!("cloud manifest for {}: {why}; treating as absent", hex::encode(key));
+                        Ok(None)
+                    }
+                },
+                Err(ureq::Error::Status(404, _)) => Ok(None),
+                Err(e) => Err(map_ureq_error(e, "get_manifest")),
+            }
+        })
     }
 }
 

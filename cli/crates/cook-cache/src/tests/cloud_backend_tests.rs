@@ -637,3 +637,61 @@ fn status_507_is_not_retried_but_other_5xx_are() {
     assert!(matches!(m(500), BackendError::Transient(_)));
     assert!(matches!(m(503), BackendError::Transient(_)));
 }
+
+fn manifest_json(key_hex: &str) -> String {
+    serde_json::to_string(&DeterminantManifest {
+        schema_version: 5,
+        recipe_namespace: "ns".into(),
+        key: key_hex.into(),
+        command_hash: 1,
+        env_contribution: 2,
+        seal_contribution: 3,
+        inputs: Default::default(),
+        output_paths: vec![],
+        empty_dir_outputs: vec![],
+        consulted_env: Default::default(),
+        sealed_probes: Default::default(),
+        observation: None,
+    })
+    .unwrap()
+}
+
+#[test]
+fn cloud_backend_get_manifest_is_none_on_404_and_on_a_foreign_key() {
+    let mut server = mockito::Server::new();
+    let (k, other) = (key(0x12), key(0x13));
+    let path = |k: &CloudKey| format!("{MANIFESTS_PATH}{}", hex::encode(k));
+    server.mock("GET", path(&k).as_str()).with_status(404).create();
+    server
+        .mock("GET", path(&other).as_str())
+        .with_status(200)
+        .with_body(manifest_json(&hex::encode(k)))
+        .create();
+    let backend = make_backend(&server.url(), 0);
+    assert_eq!(backend.get_manifest(&k).unwrap(), None);
+    assert_eq!(backend.get_manifest(&other).unwrap(), None);
+}
+
+#[test]
+fn cloud_backend_get_manifest_retries_a_body_cut_short_by_the_transport() {
+    let mut server = mockito::Server::new();
+    let k = key(0x14);
+    let path = format!("{MANIFESTS_PATH}{}", hex::encode(k));
+    let cut = server
+        .mock("GET", path.as_str())
+        .with_chunked_body(|w| {
+            w.write_all(b"{\"schema")?;
+            Err(std::io::Error::new(std::io::ErrorKind::ConnectionReset, "cut"))
+        })
+        .expect(1)
+        .create();
+    let whole = server
+        .mock("GET", path.as_str())
+        .with_body(manifest_json(&hex::encode(k)))
+        .expect(1)
+        .create();
+    let backend = make_backend(&server.url(), 3);
+    assert!(backend.get_manifest(&k).unwrap().is_some());
+    cut.assert();
+    whole.assert();
+}

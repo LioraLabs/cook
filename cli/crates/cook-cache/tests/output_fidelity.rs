@@ -153,6 +153,7 @@ fn golden_round_trip_restores_file_mode_symlink_and_empty_dir() {
     let ctx = RestoreCtx {
         backend: backend.as_ref(),
         recipe_namespace,
+        declared_outputs: &["**"],
     };
     let (result, _) = needs_rebuild_cook(
         Some(&entry),
@@ -278,6 +279,7 @@ fn security_poisoned_symlink_targets_are_rejected() {
     let ctx = RestoreCtx {
         backend: backend.as_ref(),
         recipe_namespace,
+        declared_outputs: &["**"],
     };
     let (result, updated) = needs_rebuild_cook(
         Some(&entry),

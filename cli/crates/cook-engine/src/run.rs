@@ -629,10 +629,12 @@ fn reconcile_outputs(
     }
 
     for name in reachable {
-        let Some(prior) = prior_outputs_by_recipe.get(name) else {
+        let (Some(prior), Some(ru)) =
+            (prior_outputs_by_recipe.get(name), registered_workspace.units_by_recipe.get(name))
+        else {
             continue;
         };
-        let recon = crate::reconcile::sweep(prior, &live);
+        let recon = crate::reconcile::sweep(prior, &live, &ru.working_dir);
         for p in recon.swept() {
             tracing::debug!("swept orphaned output: {}", p.display());
             all_swept.push(p.clone());

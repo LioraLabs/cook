@@ -150,6 +150,7 @@ fn cold_fetch_shares_depfile_unit_across_fleet() {
     let ctx = RestoreCtx {
         backend: &backend,
         recipe_namespace: RECIPE_NS,
+        declared_outputs: &["build/main.o"],
     };
 
     // `from` path need not exist — `fetch_by_key` only tests `discovered_inputs.is_some()`
@@ -217,6 +218,7 @@ fn cold_fetch_safe_miss_when_header_differs() {
     let ctx = RestoreCtx {
         backend: &backend,
         recipe_namespace: RECIPE_NS,
+        declared_outputs: &["build/main.o"],
     };
     let di = DiscoveredInputs {
         from: ".cook/deps/main.d".to_string(),

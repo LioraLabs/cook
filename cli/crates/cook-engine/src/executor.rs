@@ -302,7 +302,9 @@ pub(crate) fn resolve_output_paths_with_unmatched(
     for entry in declared {
         if cook_cache::is_terminal_output(entry) {
             let normalized = cook_cache::normalize_glob_pattern(entry);
-            let resolved_paths = cook_cache::resolve_glob(working_dir, normalized.as_ref());
+            // Never through a directory link: what it reaches is not this
+            // unit's to record, upload or sweep.
+            let resolved_paths = cook_cache::resolve_output_glob(working_dir, normalized.as_ref());
             if resolved_paths.is_empty() && cook_cache::has_glob_meta(entry) {
                 unmatched_patterns.push(entry.clone());
             }
@@ -1083,9 +1085,11 @@ pub fn execute_dag(
         let current_outputs: Vec<&str> = current_outputs_storage.iter().map(|s| s.as_str()).collect();
         let recipe_namespace =
             recipe_namespace(&meta.project_id, &meta.cookfile_path, &meta.recipe_name);
+        let declared_outputs: Vec<&str> = meta.output_paths.iter().map(String::as_str).collect();
         let restore_ctx = RestoreCtx {
             backend: cache_ctx.backend.as_ref(),
             recipe_namespace: &recipe_namespace,
+            declared_outputs: &declared_outputs,
         };
         // COOK-161: fold the effective seal set's probe values (materialised
         // by now — the unit depends on its sealed probes) into the key.
@@ -1173,23 +1177,11 @@ pub fn execute_dag(
             // rewrite, then reconcile `dir/` subtrees to exactly the restored
             // set (CS-0119 parity with the plain-hit path).
             if let Some(prior) = entry {
-                let stale = || {
-                    prior
-                        .outputs
-                        .iter()
-                        .filter(|rec| !restored.contains(&*rec.path))
-                        .map(|rec| work_node.working_dir.join(&*rec.path))
-                };
-                // Files first, then empty dirs (`remove_dir`, not `_all`): a
-                // stale dir record whose subtree gained restored files must
-                // survive — non-empty removal fails and that is correct.
-                cook_cache::statmemo::disarm();
-                for abs in stale().filter(|p| !p.is_dir()) {
-                    let _ = std::fs::remove_file(&abs);
-                }
-                for abs in stale().filter(|p| p.is_dir()) {
-                    let _ = std::fs::remove_dir(&abs);
-                }
+                cook_cache::remove_stale_outputs(
+                    &work_node.working_dir,
+                    prior.outputs.iter().map(|rec| &*rec.path),
+                    &restored,
+                );
             }
             let kept: std::collections::BTreeSet<String> =
                 outcome.restored_outputs.iter().cloned().collect();
@@ -3940,7 +3932,9 @@ fn upload_completion(
         &observation_bytes,
         &mut observation_meta,
     ) {
+        // A refused stream must not be paired with this run's scalars: keep both from one run.
         tracing::warn!("cache backend put failed for observation: {e}");
+        return;
     }
 
     // COOK-166: persist the producer determinant manifest alongside the shared

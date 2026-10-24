@@ -319,6 +319,50 @@ impl From<PutError> for BackendError {
     }
 }
 
+impl LocalBackend {
+    /// `path_for` has no extension, so `with_extension` appends the sidecar's.
+    fn manifest_path(&self, key: &CloudKey) -> PathBuf {
+        self.path_for(key).with_extension("provenance.json")
+    }
+
+    /// Write the `provenance.json` sidecar for `key` (tmp + rename). The
+    /// server calls this directly so an IO error keeps its `ErrorKind`.
+    pub(crate) fn write_manifest(
+        &self,
+        key: &CloudKey,
+        manifest: &DeterminantManifest,
+    ) -> Result<(), PutError> {
+        let path = self.manifest_path(key);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| store_err(format!("mkdir {}", parent.display()), e))?;
+        }
+        let bytes = serde_json::to_vec(manifest).map_err(|e| PutError::Store {
+            kind: io::ErrorKind::InvalidData,
+            msg: format!("serialize manifest: {e}"),
+        })?;
+        // `path` already ends in `.provenance.json`, so append `.tmp` to the
+        // file name (`with_extension` would replace the `.json` segment).
+        let tmp = path.with_file_name(format!(
+            "{}.tmp",
+            path.file_name().unwrap().to_string_lossy()
+        ));
+        // The fixed temp name is private to whoever holds the shard lock.
+        let _lock = self
+            .lock_shard(key)
+            .map_err(|e| store_err("manifest".into(), e))?;
+        std::fs::write(&tmp, &bytes)
+            .map_err(|e| (e, format!("write manifest {}", tmp.display())))
+            .and_then(|()| {
+                std::fs::rename(&tmp, &path).map_err(|e| (e, format!("rename {}", path.display())))
+            })
+            .map_err(|(e, ctx)| {
+                let _ = std::fs::remove_file(&tmp);
+                store_err(ctx, e)
+            })
+    }
+}
+
 fn store_err(ctx: String, e: io::Error) -> PutError {
     PutError::Store { kind: e.kind(), msg: format!("{ctx}: {e}") }
 }
@@ -608,7 +652,7 @@ impl CacheBackend for LocalBackend {
         // here appends rather than replaces — the same construction
         // `put_manifest` uses to write this sidecar in the first place.
         // Best-effort: a sidecar that was never written is not an error.
-        let _ = std::fs::remove_file(path.with_extension("provenance.json"));
+        let _ = std::fs::remove_file(self.manifest_path(key));
         Ok(())
     }
 
@@ -623,34 +667,11 @@ impl CacheBackend for LocalBackend {
         key: &CloudKey,
         manifest: &DeterminantManifest,
     ) -> BackendResult<()> {
-        let path = self.path_for(key).with_extension("provenance.json");
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| BackendError::Other(format!("mkdir {}: {e}", parent.display())))?;
-        }
-        let bytes = serde_json::to_vec(manifest)
-            .map_err(|e| BackendError::Other(format!("serialize manifest: {e}")))?;
-        // Build the temp path explicitly: `path` already ends in
-        // `…62.provenance.json`, so `with_extension("…tmp")` would replace
-        // the `.json` segment and mangle the sibling base. Append `.tmp` to
-        // the full file name instead so temp and final are siblings.
-        let tmp = path.with_file_name(format!(
-            "{}.tmp",
-            path.file_name().unwrap().to_string_lossy()
-        ));
-        // The fixed temp name is private to whoever holds the shard lock.
-        let _lock = self
-            .lock_shard(key)
-            .map_err(|e| BackendError::Other(e.to_string()))?;
-        std::fs::write(&tmp, &bytes)
-            .map_err(|e| BackendError::Other(format!("write {}: {e}", tmp.display())))?;
-        std::fs::rename(&tmp, &path)
-            .map_err(|e| BackendError::Other(format!("rename {}: {e}", path.display())))?;
-        Ok(())
+        Ok(self.write_manifest(key, manifest)?)
     }
 
     fn get_manifest(&self, key: &CloudKey) -> BackendResult<Option<DeterminantManifest>> {
-        let path = self.path_for(key).with_extension("provenance.json");
+        let path = self.manifest_path(key);
         match std::fs::read(&path) {
             Ok(b) => match serde_json::from_slice::<DeterminantManifest>(&b) {
                 Ok(m) => Ok(Some(m)),
@@ -869,7 +890,7 @@ impl LocalBackend {
             // Sidecar first (the commit point readers check), as in `delete`.
             let _ = std::fs::remove_file(path.with_extension("meta.json"));
             let blob_removed = std::fs::remove_file(&path).is_ok();
-            let _ = std::fs::remove_file(path.with_extension("provenance.json"));
+            let _ = std::fs::remove_file(self.manifest_path(&victim.key));
 
             if blob_removed {
                 outcome.objects += 1;

@@ -1805,6 +1805,48 @@ fn an_observing_unit_publishes_its_observation_to_the_shared_store() {
     );
 }
 
+/// The store keeps the first stream put at a key, so a later run whose log
+/// differs has its stream refused; its scalars must not replace the manifest.
+#[test]
+fn a_refused_observation_stream_leaves_the_stored_manifest_alone() {
+    let dir = TempDir::new().unwrap();
+    let wd = dir.path();
+    std::fs::write(wd.join("in.txt"), "x").unwrap();
+
+    let cm = std::sync::Arc::new(cook_cache::ThreadSafeCacheManager::new(wd.join("idx")));
+    let ctx = publish_ctx(wd);
+    let published = std::sync::atomic::AtomicU64::new(0);
+    let meta = meta_for(":0123456789abcdef", &["in.txt"], &[]);
+    let publish = |text: &str| {
+        let chunk = cook_contracts::OutputChunk::new(cook_contracts::OutputStream::Stdout, text)
+            .unwrap();
+        publish_completion(
+            &cm,
+            &meta,
+            wd,
+            Duration::from_millis(12),
+            &[chunk],
+            &cook_probe::store::ProbeValueStore::new(),
+            &ctx,
+            &published,
+            &[],
+        );
+    };
+
+    publish("first run\n");
+    let entry = cm.get_or_load("r").steps[":0123456789abcdef"].clone();
+    let key = entry_cloud_key(&meta, &entry, 0);
+    let first = ctx.backend.get_manifest(&key).unwrap().expect("first run stores a manifest");
+
+    publish("a different, longer second run\n");
+    let after = ctx.backend.get_manifest(&key).unwrap().unwrap();
+    assert_eq!(
+        format!("{:?}", after.observation),
+        format!("{:?}", first.observation),
+        "a manifest whose stream put was refused must not replace the stored one"
+    );
+}
+
 /// The control: producing units continue to publish their file artifacts too.
 #[test]
 fn a_producing_unit_still_publishes() {

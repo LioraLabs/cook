@@ -1056,13 +1056,10 @@ fn shared_artifacts_present(
         .get_manifest(&cloud_k)
         .ok()
         .flatten()
-        .map(|m| {
-            let mut list = m.output_paths;
-            if let Some(di) = &meta.discovered_inputs {
-                list.push(di.from.clone());
-            }
-            list.extend(m.empty_dir_outputs);
-            list
+        .and_then(|m| {
+            let depfile = meta.discovered_inputs.as_ref().map(|di| di.from.as_str());
+            let declared: Vec<&str> = meta.output_paths.iter().map(String::as_str).collect();
+            cook_cache::manifest_outputs(&cloud_k, &m, depfile, &declared)
         });
     let probe_paths: &[String] = match &manifest_outputs {
         Some(list) => list,

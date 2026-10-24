@@ -106,6 +106,7 @@ fn missing_outputs_and_depfile_are_both_restored() {
     let restore_ctx = RestoreCtx {
         backend: &backend,
         recipe_namespace: &recipe_namespace,
+        declared_outputs: &["**"],
     };
     let di = DiscoveredInputs {
         from: ".cook/deps/a.d".into(),

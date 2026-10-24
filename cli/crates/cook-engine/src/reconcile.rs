@@ -50,11 +50,15 @@ impl SweepReport {
 ///   (recorded in [`SweepReport::swept`]);
 /// - a regular file whose hash differs → kept (recorded in
 ///   [`SweepReport::kept_modified`]);
-/// - anything that is not a regular file (e.g. a directory) → left in place.
+/// - anything that is not a regular file (e.g. a directory) → left in place;
+/// - a path with a symbolic link among its directories under `working_dir` →
+///   left in place: what it names is wherever the link points (a record made
+///   before output walks stopped entering links can name `dist/assets/logo.png`
+///   through `dist/assets -> ../public`).
 ///
 /// Cook only ever deletes files it itself wrote and recorded, and never one a
 /// user has since changed.
-pub fn sweep(prior: &BTreeMap<PathBuf, u64>, live: &BTreeSet<PathBuf>) -> SweepReport {
+pub fn sweep(prior: &BTreeMap<PathBuf, u64>, live: &BTreeSet<PathBuf>, working_dir: &Path) -> SweepReport {
     let mut report = SweepReport::default();
     for (path, recorded_hash) in prior {
         if live.contains(path) {
@@ -62,6 +66,12 @@ pub fn sweep(prior: &BTreeMap<PathBuf, u64>, live: &BTreeSet<PathBuf>) -> SweepR
         }
         if !is_regular_file(path) {
             continue; // absent, or a directory (files only, §17.7).
+        }
+        let unlinked = path
+            .strip_prefix(working_dir)
+            .map_or(true, |rel| cook_cache::no_link_on_the_way(working_dir, rel.parent().unwrap_or(rel)));
+        if !unlinked {
+            continue;
         }
         match hash_file(path) {
             Some(h) if h == *recorded_hash => {

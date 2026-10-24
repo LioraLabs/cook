@@ -1,5 +1,5 @@
 use super::*;
-use crate::backend::{get_bytes, put_bytes};
+use crate::backend::{get_bytes, put_bytes, DeterminantManifest};
 use crate::cas_backend::{BackendConfig, BackendError};
 use crate::cloud_backend::CloudBackend;
 use std::sync::Arc;
@@ -571,4 +571,92 @@ fn malformed_framing_on_a_put_is_400_not_413() {
         let response = raw_exchange(&fx, raw_put_head(&k, framing).as_bytes());
         assert!(response.starts_with("HTTP/1.1 400 "), "{framing:?}: got {response:?}");
     }
+}
+
+fn manifest_for(k: &CloudKey) -> DeterminantManifest {
+    DeterminantManifest {
+        schema_version: 5,
+        recipe_namespace: "cook/Cookfile::test".into(),
+        key: hex::encode(k),
+        command_hash: 0x1111,
+        env_contribution: 0x2222,
+        seal_contribution: 0x3333,
+        inputs: [("src/a.c".to_string(), 0xAABB_u64)].into(),
+        output_paths: vec!["build/a.o".into()],
+        empty_dir_outputs: vec!["build/empty".into()],
+        consulted_env: Default::default(),
+        sealed_probes: Default::default(),
+        observation: None,
+    }
+}
+
+fn raw_manifest_put(k: &CloudKey, token: &str, body: &str) -> String {
+    format!(
+        "PUT {MANIFESTS_PATH}{} HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer {token}\r\nContent-Length: {}\r\n\r\n{body}",
+        hex::encode(k),
+        body.len()
+    )
+}
+
+#[test]
+fn manifest_round_trips_and_a_missing_one_is_absent() {
+    let fx = Fixture::start();
+    let c = fx.client();
+    let k = key(0x30);
+    assert_eq!(c.get_manifest(&k).unwrap(), None);
+    let m = manifest_for(&k);
+    c.put_manifest(&k, &m).unwrap();
+    assert_eq!(c.get_manifest(&k).unwrap(), Some(m.clone()));
+    // Last writer wins: a re-publish with a changed observation is not a conflict.
+    let again = DeterminantManifest { command_hash: 0x9999, ..m };
+    c.put_manifest(&k, &again).unwrap();
+    assert_eq!(c.get_manifest(&k).unwrap(), Some(again));
+}
+
+#[test]
+fn manifest_for_another_key_is_400_and_stores_nothing() {
+    let fx = Fixture::start();
+    let (k, other) = (key(0x31), key(0x32));
+    let body = serde_json::to_string(&manifest_for(&other)).unwrap();
+    let response = raw_exchange(&fx, raw_manifest_put(&k, TOKEN, &body).as_bytes());
+    assert!(response.starts_with("HTTP/1.1 400 "), "got {response:?}");
+    let response = raw_exchange(&fx, raw_manifest_put(&k, TOKEN, "{not json").as_bytes());
+    assert!(response.starts_with("HTTP/1.1 400 "), "got {response:?}");
+    assert_eq!(fx.client().get_manifest(&k).unwrap(), None);
+}
+
+#[test]
+fn a_declared_oversize_manifest_is_413_before_the_body_is_read() {
+    let fx = Fixture::start();
+    let k = key(0x33);
+    let head = format!(
+        "PUT {MANIFESTS_PATH}{} HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer {TOKEN}\r\nContent-Length: {}\r\nExpect: 100-continue\r\n\r\n",
+        hex::encode(k),
+        MAX_MANIFEST_BYTES + 1
+    );
+    // No body is sent and the write side stays open: a server that waited for it would time out.
+    use std::io::Write;
+    let mut s = idle(&fx);
+    s.write_all(head.as_bytes()).unwrap();
+    let mut response = String::new();
+    s.read_to_string(&mut response).unwrap();
+    assert!(response.starts_with("HTTP/1.1 413 "), "got {response:?}");
+    assert!(!response.contains("100 Continue"), "got {response:?}");
+}
+
+#[test]
+fn manifest_route_wants_the_token_a_good_key_and_a_known_method() {
+    let fx = Fixture::start();
+    let k = key(0x34);
+    let body = serde_json::to_string(&manifest_for(&k)).unwrap();
+    let response = raw_exchange(&fx, raw_manifest_put(&k, "wrong", &body).as_bytes());
+    assert!(response.starts_with("HTTP/1.1 401 "), "got {response:?}");
+    assert!(fx.client_with("wrong").get_manifest(&k).is_err());
+    let bad_key = format!("GET {MANIFESTS_PATH}zz HTTP/1.1\r\nAuthorization: Bearer {TOKEN}\r\n\r\n");
+    assert!(raw_exchange(&fx, bad_key.as_bytes()).starts_with("HTTP/1.1 400 "));
+    let del = format!(
+        "DELETE {MANIFESTS_PATH}{} HTTP/1.1\r\nAuthorization: Bearer {TOKEN}\r\n\r\n",
+        hex::encode(k)
+    );
+    assert!(raw_exchange(&fx, del.as_bytes()).starts_with("HTTP/1.1 405 "));
 }

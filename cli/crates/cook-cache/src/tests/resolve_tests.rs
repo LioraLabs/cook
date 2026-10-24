@@ -314,3 +314,21 @@ fn the_inert_fallback_is_judged_over_pattern_derived_candidates() {
         "no candidate matched, so the unnarrowed expansion stands"
     );
 }
+
+/// The stale sweep stays out of what a link points at: a prior output named
+/// through `dist/assets -> ../public` is not ours, and the link itself goes as a file.
+#[cfg(unix)]
+#[test]
+fn remove_stale_outputs_never_goes_through_a_link() {
+    let tmp = tempfile::tempdir().unwrap();
+    let wd = tmp.path();
+    std::fs::create_dir_all(wd.join("public")).unwrap();
+    std::fs::create_dir_all(wd.join("dist")).unwrap();
+    std::fs::write(wd.join("public/logo.png"), b"x").unwrap();
+    std::fs::write(wd.join("dist/old.js"), b"x").unwrap();
+    std::os::unix::fs::symlink("../public", wd.join("dist/assets")).unwrap();
+    remove_stale_outputs(wd, ["dist/assets/logo.png", "dist/old.js", "dist/assets"], &BTreeSet::new());
+    assert!(wd.join("public/logo.png").exists());
+    assert!(!wd.join("dist/old.js").exists());
+    assert!(std::fs::symlink_metadata(wd.join("dist/assets")).is_err());
+}

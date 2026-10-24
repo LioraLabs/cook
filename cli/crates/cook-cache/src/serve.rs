@@ -20,6 +20,7 @@ use crate::backend::{
 };
 use crate::cap::CapCounter;
 use crate::cloud_backend::{meta_from_headers, meta_to_headers};
+use crate::manifest_wire::{decode_manifest, ManifestRefusal, MANIFESTS_PATH, MAX_MANIFEST_BYTES};
 use crate::http1::{self, Body, HeadError, Reply};
 
 /// A batch_query body larger than this is refused (413).
@@ -258,6 +259,16 @@ impl CacheServer {
                 }
                 self.batch_query(request)
             }
+            _ if path.starts_with(MANIFESTS_PATH) => {
+                let Some(key) = parse_key(&path[MANIFESTS_PATH.len()..]) else {
+                    return text(400, "key must be 64 lowercase hex characters");
+                };
+                match method {
+                    "GET" => self.get_manifest(&key),
+                    "PUT" => self.put_manifest(request, &key),
+                    _ => text(405, "use GET or PUT"),
+                }
+            }
             _ => {
                 let Some(hex_key) = path.strip_prefix("/v1/artifacts/") else {
                     return text(404, "unknown path");
@@ -373,6 +384,43 @@ impl CacheServer {
             Err(e) => return put_failure(key, e),
         };
         match self.backend.commit(key, staged, &mut meta) {
+            Ok(()) => text(200, "stored"),
+            Err(e) => put_failure(key, e),
+        }
+    }
+
+    fn get_manifest(&self, key: &CloudKey) -> Reply {
+        match self.backend.get_manifest(key) {
+            Ok(Some(m)) => match serde_json::to_vec(&m) {
+                Ok(bytes) => Reply::new(200, Body::Bytes(bytes))
+                    .header("Content-Type", "application/json")
+                    .unwrap_or_else(|()| text(500, "content type")),
+                Err(e) => text(500, &format!("serialize manifest: {e}")),
+            },
+            Ok(None) => text(404, "not found"),
+            Err(e) => text(500, &e.to_string()),
+        }
+    }
+
+    /// Last writer wins: the manifest carries a per-run observation, so a
+    /// conflict check would refuse every re-publish.
+    fn put_manifest(&self, request: &mut Request, key: &CloudKey) -> Reply {
+        // Refused before the body is read (or `100 Continue` sent).
+        match request.declared_length() {
+            Err(reply) => return reply,
+            Ok(Some(n)) if n > MAX_MANIFEST_BYTES => return text(413, &ManifestRefusal::TooLarge.to_string()),
+            Ok(_) => {}
+        }
+        let body = match request.body() {
+            Ok(b) => b,
+            Err(reply) => return reply,
+        };
+        let manifest = match decode_manifest(key, body) {
+            Ok(m) => m,
+            Err(ManifestRefusal::TooLarge) => return text(413, &ManifestRefusal::TooLarge.to_string()),
+            Err(e) => return text(400, &e.to_string()),
+        };
+        match self.backend.write_manifest(key, &manifest) {
             Ok(()) => text(200, "stored"),
             Err(e) => put_failure(key, e),
         }
