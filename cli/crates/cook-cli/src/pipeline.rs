@@ -1090,22 +1090,60 @@ pub fn cmd_audit(globals: &Globals, args: &crate::cli::AuditArgs) -> Result<(), 
     let root = std::fs::canonicalize(resolve_project_root(globals)?)
         .map_err(|e| CookError::Other(format!("audit: project root: {e}")))?;
     cook_engine::verify::tracer().map_err(unsupported)?;
-    match isolate(&root).map_err(unsupported)? {
-        Isolation::Parent(code) => std::process::exit(code),
-        Isolation::Inside => {}
-    }
+    use cook_engine::audit::baseline::{BASELINE_FILE, Baseline, apply, persist, regenerate};
+    let target = root.join(BASELINE_FILE);
+    // A malformed baseline refuses once, here, before anything runs.
+    let old = Baseline::load(&target).map_err(CookError::Other)?;
+    let channel = match isolate(&root).map_err(unsupported)? {
+        Isolation::Parent { code, handback } => {
+            // The child only reports; this is the one write of the tracked file.
+            // Persisted from a complete frame whatever the exit code (errored
+            // recipes were carried unchanged), as our own rendering of what the
+            // frame parsed to, never its bytes.
+            if args.baseline {
+                match handback {
+                    Some(bytes) => {
+                        let new = Baseline::from_handback(&old, &bytes)
+                            .map_err(|e| CookError::Other(format!("audit: {e}; {BASELINE_FILE} unchanged")))?;
+                        match persist(&target, new.render().as_bytes()).map_err(CookError::Other)? {
+                            true => eprintln!("audit: wrote {BASELINE_FILE}"),
+                            false => eprintln!("audit: {BASELINE_FILE} unchanged"),
+                        }
+                    }
+                    None if code == 0 => {
+                        return Err(CookError::Other(format!(
+                            "audit: the isolated run handed back no baseline; {BASELINE_FILE} unchanged"
+                        )));
+                    }
+                    // The child already said why it failed.
+                    None => eprintln!("audit: {BASELINE_FILE} unchanged"),
+                }
+            }
+            std::process::exit(code)
+        }
+        Isolation::Inside { handback } => handback,
+    };
 
-    let report = audit_isolated(globals, args, &root, recipe_name)?;
+    let mut report = audit_isolated(globals, args, &root, recipe_name)?;
+    if args.baseline {
+        use std::io::Write;
+        let mut pipe = channel.ok_or_else(|| CookError::Other("audit: no handback pipe from the parent cook; the baseline cannot be written".into()))?;
+        let msg = cook_engine::sandbox::frame(regenerate(&old, &report, args.prune).render().as_bytes());
+        pipe.write_all(&msg)
+            .map_err(|e| CookError::Other(format!("audit: handing the baseline back: {e}")))?;
+    }
+    let ratchet = apply(&mut report, &old);
 
     if args.json {
-        println!("{}", audit_json_value(recipe_name, &report));
+        println!("{}", audit_json_value(recipe_name, &report, &ratchet));
     } else {
-        print_audit_human(&report);
+        print_audit_human(&report, &ratchet);
         if report.units.is_empty() {
             eprintln!("audit: nothing to audit in {recipe_name} (no cacheable command units)");
         }
     }
-    match report.exit_code() {
+    // `--baseline` accepts the findings; the engine owns the rule.
+    match report.exit_code(args.baseline) {
         0 => Ok(()),
         code => std::process::exit(code),
     }
@@ -1155,18 +1193,17 @@ fn audit_isolated(
 /// re-run inherited that environment); the value is never looked at.
 fn audit_env_line(f: &cook_engine::audit::Finding, is_set: bool) -> String {
     let state = if is_set { "set" } else { "unset" };
-    format!("{}  env  {} — nothing keys it ({state})", f.recipe, f.root)
+    format!("{}  {}  {} — nothing keys it ({state})", f.recipe, f.kind.as_str(), f.root)
 }
 
 fn audit_env_unobserved_line(f: &cook_engine::audit::Finding) -> String {
-    format!("{}  env-unobserved  {} — env not observed", f.recipe, f.root)
+    format!("{}  {}  {} — env not observed", f.recipe, f.kind.as_str(), f.root)
 }
 
-fn print_audit_human(report: &cook_engine::audit::AuditReport) {
+fn print_audit_human(report: &cook_engine::audit::AuditReport, ratchet: &cook_engine::audit::baseline::Ratchet) {
     for f in &report.findings {
-        let kind = match f.kind {
-            cook_engine::audit::FindingKind::Read => "read",
-            cook_engine::audit::FindingKind::Absent => "absent",
+        match f.kind {
+            cook_engine::audit::FindingKind::Read | cook_engine::audit::FindingKind::Absent => {}
             cook_engine::audit::FindingKind::EnvUnobserved => {
                 println!("{}", audit_env_unobserved_line(f));
                 continue;
@@ -1175,8 +1212,8 @@ fn print_audit_human(report: &cook_engine::audit::AuditReport) {
                 println!("{}", audit_env_line(f, std::env::var_os(&f.root).is_some()));
                 continue;
             }
-        };
-        println!("{}  {}  {}", f.recipe, kind, f.root);
+        }
+        println!("{}  {}  {}", f.recipe, f.kind.as_str(), f.root);
         if f.count == 1 && f.paths[0] != f.root {
             println!("  ({})", f.paths[0]);
         } else if f.count > 1 {
@@ -1185,25 +1222,36 @@ fn print_audit_human(report: &cook_engine::audit::AuditReport) {
             println!("  ({} paths: {shown}{more})", f.count);
         }
     }
-    for u in report.units.iter().filter(|u| u.status == "error") {
+    for u in report.units.iter().filter(|u| u.errored()) {
         println!("[ERROR] {}/{} — {}", u.recipe, u.unit, u.detail);
     }
+    for s in &ratchet.stale {
+        println!("{}  stale  {}  {} — no longer observed", s.recipe, s.kind, s.entry);
+    }
     println!(
-        "audit: {} unit(s) traced, {} error(s), {} finding(s)",
+        "audit: {} unit(s) traced, {} error(s), {} finding(s), {} accepted, {} stale",
         report.units.iter().filter(|u| u.status == "traced").count(),
         report.errors(),
-        report.findings.len()
+        report.findings.len(),
+        ratchet.accepted,
+        ratchet.stale.len()
     );
 }
 
 /// The `cook audit --json` document, built from the engine's serializable
 /// report so strings are escaped by serde rather than by hand.
-fn audit_json_value(recipe: &str, report: &cook_engine::audit::AuditReport) -> serde_json::Value {
+fn audit_json_value(
+    recipe: &str,
+    report: &cook_engine::audit::AuditReport,
+    ratchet: &cook_engine::audit::baseline::Ratchet,
+) -> serde_json::Value {
     serde_json::json!({
         "recipe": recipe,
         "units": report.units,
         "findings": report.findings,
         "errors": report.errors(),
+        "accepted": ratchet.accepted,
+        "stale": ratchet.stale,
     })
 }
 

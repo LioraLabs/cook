@@ -22,3 +22,17 @@ fn make_removable_unlocks_read_only_dirs() {
     make_removable(d.path());
     d.close().unwrap();
 }
+
+#[test]
+fn a_frame_round_trips_and_anything_else_is_refused() {
+    assert_eq!(unframe(&frame(b"{}")), Some(b"{}".to_vec()));
+    assert_eq!(unframe(&frame(b"")), Some(vec![]));
+    assert_eq!(unframe(b""), None, "empty");
+    assert_eq!(unframe(&[2, 0, 0, 0]), None, "short header");
+    let whole = frame(b"abcd");
+    assert_eq!(unframe(&whole[..whole.len() - 1]), None, "short body");
+    let mut extra = whole.clone();
+    extra.push(b'x');
+    assert_eq!(unframe(&extra), None, "trailing bytes");
+    assert_eq!(unframe(&[0xff; 12]), None, "huge length");
+}

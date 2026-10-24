@@ -173,9 +173,9 @@ pub enum Cmd {
     /// (`read`) and the paths they probed that were absent (`absent`). The real
     /// tree and the user cache are never written.
     ///
-    /// Exits 1 while any finding remains, including reads of system and
-    /// toolchain paths that nothing can declare yet, so it is a diagnostic,
-    /// not a CI gate. Linux only; needs `strace` and user namespaces.
+    /// Exits 1 while any finding remains that cook-audit-baseline.json (if
+    /// any) does not accept, or any unit errors; `--baseline` adds the
+    /// current findings there and `--baseline --prune` replaces them. Linux only; needs `strace` and user namespaces.
     Audit(AuditArgs),
 
     /// Run a recipe by name. Captured for any first positional that does not
@@ -437,6 +437,15 @@ pub struct AuditArgs {
     /// Emit machine-readable JSON instead of a human summary.
     #[arg(long = "json")]
     pub json: bool,
+    /// Add the current findings to cook-audit-baseline.json at the project
+    /// root, keeping its literals and `*` patterns (tools read different
+    /// files on identical runs); exits non-zero only on unit errors.
+    #[arg(long = "baseline")]
+    pub baseline: bool,
+    /// With --baseline: replace the audited recipes' literals with this run's
+    /// and drop the literals of recipes the workspace no longer registers. Patterns stay.
+    #[arg(long = "prune", requires = "baseline")]
+    pub prune: bool,
 }
 
 #[derive(clap::Args, Debug, Clone)]

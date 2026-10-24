@@ -800,3 +800,273 @@ fn a_unit_whose_coverage_errors_still_reports_its_environment_reads() {
     assert!(!units.is_empty() && units.iter().all(|u| u["status"] == "error"), "{doc}");
     assert!(env_roots(&doc).iter().any(|r| r == "NODE_ENV"), "{doc}");
 }
+
+// ---------------------------------------------------------------------------
+// The baseline (CS-0267)
+// ---------------------------------------------------------------------------
+
+const BASELINE: &str = "cook-audit-baseline.json";
+
+fn baseline_json(dir: &Path) -> serde_json::Value {
+    serde_json::from_slice(&fs::read(dir.join(BASELINE)).unwrap()).unwrap()
+}
+
+fn stale_entries(doc: &serde_json::Value) -> Vec<String> {
+    doc["stale"].as_array().unwrap().iter().map(|s| s["entry"].as_str().unwrap().to_string()).collect()
+}
+
+#[test]
+fn baseline_writes_the_file_and_a_plain_audit_then_passes() {
+    let dir = project(LINT);
+    let xdg = TempDir::new().unwrap();
+    let Some(out) = audit(dir.path(), xdg.path(), &["lint", "--baseline"]) else { return };
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("audit: wrote cook-audit-baseline.json"));
+    let b = baseline_json(dir.path());
+    assert_eq!(b["version"], 1);
+    assert!(b["recipes"]["lint"]["read"].as_array().unwrap().iter().any(|e| e == ".lintrc"), "{b}");
+    assert!(b["recipes"]["lint"]["absent"].as_array().unwrap().iter().any(|e| e == "missing.cfg"), "{b}");
+
+    let out = audit(dir.path(), xdg.path(), &["lint", "--json"]).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stdout));
+    let doc = json(&out);
+    assert_eq!(doc["findings"].as_array().unwrap().len(), 0, "{doc}");
+    assert!(doc["accepted"].as_u64().unwrap() > 0, "{doc}");
+    assert!(doc["stale"].as_array().unwrap().is_empty(), "{doc}");
+}
+
+#[test]
+fn regenerating_twice_is_byte_identical_and_says_unchanged() {
+    let dir = project(LINT);
+    let xdg = TempDir::new().unwrap();
+    let Some(_) = audit(dir.path(), xdg.path(), &["lint", "--baseline"]) else { return };
+    let first = fs::read(dir.path().join(BASELINE)).unwrap();
+    let out = audit(dir.path(), xdg.path(), &["lint", "--baseline"]).unwrap();
+    assert_eq!(first, fs::read(dir.path().join(BASELINE)).unwrap());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("audit: cook-audit-baseline.json unchanged"));
+}
+
+#[test]
+fn a_new_undeclared_read_is_the_only_finding() {
+    let dir = project(LINT);
+    let xdg = TempDir::new().unwrap();
+    let Some(_) = audit(dir.path(), xdg.path(), &["lint", "--baseline"]) else { return };
+    fs::write(dir.path().join("extra.cfg"), "x").unwrap();
+    let grown = LINT.replace("cat .lintrc", "cat extra.cfg .lintrc");
+    fs::write(dir.path().join("Cookfile"), grown).unwrap();
+    let out = audit(dir.path(), xdg.path(), &["lint", "--json"]).unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let doc = json(&out);
+    let all: Vec<&str> = doc["findings"].as_array().unwrap().iter().flat_map(|f| f["paths"].as_array().unwrap()).map(|p| p.as_str().unwrap()).collect();
+    assert_eq!(all, ["extra.cfg"], "{doc}");
+}
+
+#[test]
+fn a_removed_read_is_stale_plain_baseline_keeps_it_and_prune_drops_it() {
+    let dir = project(LINT);
+    let xdg = TempDir::new().unwrap();
+    let Some(_) = audit(dir.path(), xdg.path(), &["lint", "--baseline"]) else { return };
+    fs::write(dir.path().join("Cookfile"), LINT.replace("cat .lintrc src/a.ts", "cat src/a.ts")).unwrap();
+    let out = audit(dir.path(), xdg.path(), &["lint", "--json"]).unwrap();
+    assert_eq!(out.status.code(), Some(0), "stale entries do not fail");
+    assert!(stale_entries(&json(&out)).contains(&".lintrc".to_string()));
+    let has = |b: &serde_json::Value| b["recipes"]["lint"]["read"].as_array().unwrap().iter().any(|e| e == ".lintrc");
+    audit(dir.path(), xdg.path(), &["lint", "--baseline"]).unwrap();
+    assert!(has(&baseline_json(dir.path())), "a plain --baseline never removes a literal");
+    audit(dir.path(), xdg.path(), &["lint", "--baseline", "--prune"]).unwrap();
+    assert!(!has(&baseline_json(dir.path())), "{}", baseline_json(dir.path()));
+}
+
+#[test]
+fn a_hand_written_pattern_survives_regeneration_and_accepts_its_matches() {
+    let cookfile = "recipe lint\n    seal \"src/a.ts\"\n    test { cat conf/app.cfg src/a.ts >/dev/null; test -f conf/missing.cfg || true }\n";
+    let dir = project(cookfile);
+    fs::create_dir_all(dir.path().join("conf")).unwrap();
+    fs::write(dir.path().join("conf/app.cfg"), "c\n").unwrap();
+    let xdg = TempDir::new().unwrap();
+    fs::write(
+        dir.path().join(BASELINE),
+        r#"{"version": 1, "recipes": {"lint": {"absent": ["conf/miss*"], "read": ["conf/*"]}}}"#,
+    )
+    .unwrap();
+    let out = audit(dir.path(), xdg.path(), &["lint", "--json"]).unwrap();
+    let doc = json(&out); // system reads remain: the anchored patterns do not swallow them
+    assert!(doc["accepted"].as_u64().unwrap() >= 2, "{doc}");
+    assert!(!doc["findings"].to_string().contains("conf/"), "{doc}");
+    for flags in [&["lint", "--baseline"][..], &["lint", "--baseline", "--prune"]] {
+        audit(dir.path(), xdg.path(), flags).unwrap();
+        let b = baseline_json(dir.path());
+        assert_eq!(b["recipes"]["lint"]["absent"], serde_json::json!(["conf/miss*"]), "{b}");
+        assert!(b["recipes"]["lint"]["read"].as_array().unwrap().iter().any(|e| e == "conf/*"), "{b}");
+        assert!(!b["recipes"]["lint"]["read"].as_array().unwrap().iter().any(|e| e == "conf/app.cfg"), "{b}");
+    }
+}
+
+#[test]
+fn a_tool_that_reads_a_different_file_each_run_settles_after_two_baselines() {
+    let toggle = TempDir::new().unwrap(); // outside the project: the overlay's writes persist
+    let which = toggle.path().join("which");
+    let cookfile = format!("recipe lint\n    seal \"src/a.ts\"\n    test {{ cat \"$(cat {})\" >/dev/null }}\n", which.display());
+    let dir = project(&cookfile);
+    fs::write(dir.path().join("flap-a.txt"), "a\n").unwrap();
+    fs::write(dir.path().join("flap-b.txt"), "b\n").unwrap();
+    let xdg = TempDir::new().unwrap();
+    let pick = |f: &str| fs::write(&which, format!("{}/{f}", dir.path().display())).unwrap();
+    // The project is overlaid at its own path; the unit reads through the project path.
+    let reads = |dir: &Path| -> Vec<String> {
+        let b = baseline_json(dir);
+        b["recipes"]["lint"]["read"].as_array().unwrap().iter().map(|e| e.as_str().unwrap().to_string()).collect()
+    };
+    pick("flap-a.txt");
+    let Some(_) = audit(dir.path(), xdg.path(), &["lint", "--baseline"]) else { return };
+    assert!(reads(dir.path()).contains(&"flap-a.txt".to_string()) && !reads(dir.path()).contains(&"flap-b.txt".to_string()));
+    pick("flap-b.txt");
+    audit(dir.path(), xdg.path(), &["lint", "--baseline"]).unwrap();
+    let held = fs::read(dir.path().join(BASELINE)).unwrap();
+    let r = reads(dir.path());
+    assert!(r.contains(&"flap-a.txt".to_string()) && r.contains(&"flap-b.txt".to_string()), "{r:?}");
+    for f in ["flap-a.txt", "flap-b.txt"] {
+        pick(f);
+        let out = audit(dir.path(), xdg.path(), &["lint", "--baseline"]).unwrap();
+        assert!(String::from_utf8_lossy(&out.stderr).contains("unchanged"), "{}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(held, fs::read(dir.path().join(BASELINE)).unwrap());
+    }
+    for f in ["flap-a.txt", "flap-b.txt"] {
+        pick(f);
+        let out = audit(dir.path(), xdg.path(), &["lint", "--json"]).unwrap();
+        assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stdout));
+    }
+}
+
+#[test]
+fn a_recipe_removed_from_the_cookfile_is_stale_and_only_prune_drops_its_literals() {
+    let cookfile = format!("{LINT}recipe other\n    seal \"src/a.ts\"\n    test {{ cat src/a.ts >/dev/null }}\n");
+    let dir = project(&cookfile);
+    let xdg = TempDir::new().unwrap();
+    fs::write(
+        dir.path().join(BASELINE),
+        r#"{"version": 1, "recipes": {"gone": {"read": ["old.txt", "conf/*"]}, "other": {"read": ["kept.txt"]}}}"#,
+    )
+    .unwrap();
+    let Some(out) = audit(dir.path(), xdg.path(), &["lint", "--json"]) else { return };
+    assert_eq!(out.status.code(), Some(1), "lint's own findings remain");
+    let stale: Vec<(String, String)> = json(&out)["stale"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| (s["recipe"].as_str().unwrap().to_string(), s["entry"].as_str().unwrap().to_string()))
+        .collect();
+    assert!(stale.contains(&("gone".into(), "old.txt".into())) && stale.contains(&("gone".into(), "conf/*".into())), "{stale:?}");
+    assert!(!stale.iter().any(|(r, _)| r == "other"), "registered, outside the closure: not stale: {stale:?}");
+
+    let out = audit(dir.path(), xdg.path(), &["lint", "--baseline"]).unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(baseline_json(dir.path())["recipes"]["gone"]["read"], serde_json::json!(["conf/*", "old.txt"]));
+    audit(dir.path(), xdg.path(), &["lint", "--baseline", "--prune"]).unwrap();
+    let b = baseline_json(dir.path());
+    assert_eq!(b["recipes"]["gone"]["read"], serde_json::json!(["conf/*"]), "{b}");
+    assert_eq!(b["recipes"]["other"]["read"], serde_json::json!(["kept.txt"]), "{b}");
+}
+
+#[test]
+fn prune_without_baseline_is_refused() {
+    let dir = project(LINT);
+    let xdg = TempDir::new().unwrap();
+    let Some(out) = audit(dir.path(), xdg.path(), &["lint", "--prune"]) else { return };
+    assert_eq!(out.status.code(), Some(2));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("--baseline"), "{err}");
+    assert!(!dir.path().join(BASELINE).exists());
+}
+
+#[test]
+fn a_malformed_baseline_is_refused_before_anything_runs() {
+    let xdg = TempDir::new().unwrap();
+    // Outside the project: a project-relative marker would land in the discarded overlay.
+    let marker = xdg.path().join("ran.marker");
+    let dir = project(&format!("recipe lint\n    seal \"src/a.ts\"\n    test {{ touch {} }}\n", marker.display()));
+    fs::write(dir.path().join(BASELINE), r#"{"version": 2, "recipes": {}}"#).unwrap();
+    let Some(out) = audit(dir.path(), xdg.path(), &["lint", "--baseline"]) else { return };
+    assert_ne!(out.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&out.stderr).contains(BASELINE), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(fs::read_to_string(dir.path().join(BASELINE)).unwrap(), r#"{"version": 2, "recipes": {}}"#);
+    assert!(!marker.exists(), "a unit ran");
+    assert!(!String::from_utf8_lossy(&out.stdout).contains("unit(s) traced"));
+}
+
+#[test]
+fn a_plain_audit_never_creates_the_baseline_file() {
+    let dir = project(LINT);
+    let xdg = TempDir::new().unwrap();
+    let Some(_) = audit(dir.path(), xdg.path(), &["lint"]) else { return };
+    assert!(!dir.path().join(BASELINE).exists());
+}
+
+/// A unit that attacks the handback every way it can reach: the old scratch
+/// file (and a directory in the rename's way), every sandbox run dir, fds 3..30,
+/// every `/proc/*/fd/*`, and again from a daemon after the unit has returned.
+/// It runs from a variable (`sh -c`), not as a file: a forged frame written
+/// through the fd sh reads a script by would only break the forger. The genuine
+/// reads come first: what it appends to its own trace hides only later lines.
+const FORGER: &str = r#"J='{"version":1,"recipes":{"lint":{"read":["**"],"absent":["**"]}}}'
+n=${#J}
+FRAME="$(printf "\\$(printf %03o $n)\\0\\0\\0\\0\\0\\0\\0")$J"
+attack() {
+    printf %s "$J" > "$COOK_SANDBOX_SCRATCH/handback"; mkdir -p "$COOK_SANDBOX_SCRATCH/handback.tmp"
+    for d in "$XDG_CACHE_HOME"/cook/sandbox/.tmp*/run "$HOME"/.cache/cook/sandbox/.tmp*/run; do
+        [ -d "$d" ] || continue
+        printf %s "$J" > "$d/handback"; mkdir -p "$d/handback.tmp"
+    done 2>/dev/null
+    fd=3; while [ $fd -le 30 ]; do eval "printf %s \"\$FRAME\" >&$fd" 2>/dev/null; fd=$((fd+1)); done
+    # Appended, not truncated: a truncated trace file only hides the forger from the audit.
+    for f in /proc/[0-9]*/fd/*; do printf %s "$FRAME" >> "$f"; done 2>/dev/null
+}
+if [ "$1" = daemon ]; then i=0; while [ $i -lt 20 ]; do sleep 0.2; attack; i=$((i+1)); done; exit 0; fi
+attack
+setsid sh -c "$S" forger daemon </dev/null >/dev/null 2>&1 &
+"#;
+
+#[test]
+fn a_unit_cannot_forge_what_baseline_persists() {
+    let recipe = "recipe lint\n    seal \"src/a.ts\" \"forger.sh\"\n    test { cat .lintrc src/a.ts >/dev/null; S=\"$(cat forger.sh)\"; export S; sh -c \"$S\" }\n";
+    let dir = project(recipe);
+    fs::write(dir.path().join("forger.sh"), FORGER).unwrap();
+    let xdg = TempDir::new().unwrap();
+    let Some(out) = audit(dir.path(), xdg.path(), &["lint", "--baseline"]) else { return };
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    let b = baseline_json(dir.path());
+    let entries: Vec<&str> = b["recipes"]["lint"]
+        .as_object()
+        .unwrap()
+        .values()
+        .flat_map(|v| v.as_array().unwrap())
+        .map(|e| e.as_str().unwrap())
+        .collect();
+    assert!(entries.contains(&".lintrc"), "{b}");
+    assert!(entries.iter().all(|e| !e.contains('*')), "{b}");
+    // System reads are genuine too; nothing from the project but what was read.
+    let project: Vec<_> = entries.iter().filter(|e| !e.starts_with(['/', '~'])).collect();
+    assert!(project.iter().all(|e| [".lintrc", "src/a.ts", "forger.sh"].contains(e)), "{b}");
+
+    // The next audit accepts only what was genuinely read.
+    fs::write(dir.path().join("extra.cfg"), "x").unwrap();
+    fs::write(dir.path().join("Cookfile"), recipe.replace("cat .lintrc", "cat extra.cfg .lintrc")).unwrap();
+    let out = audit(dir.path(), xdg.path(), &["lint"]).unwrap();
+    assert_eq!(out.status.code(), Some(1), "{}", String::from_utf8_lossy(&out.stdout));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("extra.cfg"), "{}", String::from_utf8_lossy(&out.stdout));
+}
+
+/// HOME of `/` (CI containers), empty or relative is no home: system paths stay
+/// absolute, and a relative HOME (`lintrc`) does not eat a name it ends (`.lintrc`).
+#[test]
+fn a_root_or_empty_home_spells_system_paths_absolute() {
+    let dir = project("recipe lint\n    seal \"src/a.ts\"\n    test { cat .lintrc src/a.ts >/dev/null }\n");
+    let xdg = TempDir::new().unwrap();
+    for home in ["/", "", "lintrc"] {
+        let Some(out) = audit_with(dir.path(), xdg.path(), &["lint"], &[("HOME", Path::new(home))]) else { return };
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("lint  read  .lintrc"), "HOME={home:?}: {stdout}");
+        assert!(stdout.contains("  /usr/") || stdout.contains("  /bin/") || stdout.contains("  /lib"), "HOME={home:?}: {stdout}");
+        assert!(!stdout.contains("~/"), "HOME={home:?}: {stdout}");
+    }
+}

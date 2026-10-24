@@ -15,6 +15,7 @@ use cook_contracts::consumes::ConsumesFilter;
 use cook_contracts::pathlaw::normalize;
 use cook_contracts::WorkPayload;
 
+pub mod baseline;
 mod covers;
 mod env;
 pub use env::{unobserved_programs, AUDIT_IGNORED_ENV};
@@ -44,6 +45,21 @@ pub enum FindingKind {
     EnvUnobserved,
 }
 
+impl FindingKind {
+    /// Every kind; the test beside it fails to compile when a variant is missing.
+    pub const ALL: [FindingKind; 4] = [FindingKind::Read, FindingKind::Absent, FindingKind::Env, FindingKind::EnvUnobserved];
+
+    /// The spelling in JSON, the baseline file and the human lines.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FindingKind::Read => "read",
+            FindingKind::Absent => "absent",
+            FindingKind::Env => "env",
+            FindingKind::EnvUnobserved => "env-unobserved",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Finding {
     pub recipe: String,
@@ -67,15 +83,29 @@ pub struct UnitAudit {
 pub struct AuditReport {
     pub units: Vec<UnitAudit>,
     pub findings: Vec<Finding>,
+    /// Every recipe in the audited closure, with or without units.
+    #[serde(skip)]
+    pub recipes: BTreeSet<String>,
+    /// Every recipe the Cookfile registers, in the closure or not.
+    #[serde(skip)]
+    pub known: BTreeSet<String>,
+}
+
+impl UnitAudit {
+    /// The one test for a unit that could not be traced.
+    pub fn errored(&self) -> bool {
+        self.status == "error"
+    }
 }
 
 impl AuditReport {
-    /// 0 iff nothing was found and every unit traced.
-    pub fn exit_code(&self) -> i32 {
-        if self.findings.is_empty() && self.errors() == 0 { 0 } else { 1 }
+    /// The one exit rule: 1 on any errored unit; findings also fail unless
+    /// `accepting` (`--baseline` takes them in).
+    pub fn exit_code(&self, accepting: bool) -> i32 {
+        if self.errors() > 0 || (!accepting && !self.findings.is_empty()) { 1 } else { 0 }
     }
     pub fn errors(&self) -> usize {
-        self.units.iter().filter(|u| u.status == "error").count()
+        self.units.iter().filter(|u| u.errored()).count()
     }
 }
 
@@ -297,9 +327,10 @@ fn trace_calls(text: &str, start_cwd: &Path) -> Vec<(u32, String, Access)> {
 // ---------------------------------------------------------------------------
 
 /// Project-relative, `~/rel` under `home`, else absolute. A project or home
-/// path embedded in the result (a tool joining an absolute path under a
+/// path embedded in a relative result (a tool joining an absolute path under a
 /// relative dir: `public/home/me/proj/a.svg`) is replaced too, so a finding
-/// never carries the machine's paths.
+/// never carries the machine's paths. A path that stayed absolute is under
+/// neither, so it is left alone (`/srv/home/me/x` is not `/srv/~/x`).
 fn spelling(path: &Path, project_root: &Path, home: Option<&Path>) -> String {
     let s = if let Ok(rel) = path.strip_prefix(project_root) {
         let s = rel.to_string_lossy();
@@ -307,7 +338,7 @@ fn spelling(path: &Path, project_root: &Path, home: Option<&Path>) -> String {
     } else if let Some(rel) = home.and_then(|h| path.strip_prefix(h).ok()) {
         format!("~/{}", rel.to_string_lossy())
     } else {
-        path.to_string_lossy().into_owned()
+        return path.to_string_lossy().into_owned();
     };
     let s = elide(&s, project_root, "<project>");
     home.map_or(s.clone(), |h| elide(&s, h, "~"))
@@ -591,7 +622,9 @@ pub(crate) fn audit_in_place(
     let mut ignore: Vec<PathBuf> = ["/proc", "/dev", "/sys", "/tmp", "/var/tmp"].map(PathBuf::from).into();
     ignore.push(std::env::temp_dir());
     ignore.push(cook_cache::cloud_config::user_cache_root());
-    let home = std::env::var_os("HOME").map(PathBuf::from);
+    // A HOME of `/` (CI containers), empty or relative is no home: everything, or
+    // any matching component, would be spelled `~`.
+    let home = std::env::var_os("HOME").map(PathBuf::from).filter(|h| h.is_absolute() && h.parent().is_some());
 
     let order = cook_contracts::unit_graph::toposort_recipes(edges, reachable).map_err(|e| e.to_string())?;
     // The recorder is preloaded into every traced re-run; off Linux there is
@@ -605,8 +638,9 @@ pub(crate) fn audit_in_place(
         std::io::ErrorKind::Unsupported => format!("{UNSUPPORTED_HERE}{e}"),
         _ => format!("env recorder: {e}"),
     })?;
-    let mut report = AuditReport::default();
+    let mut report = AuditReport { known: workspace.names.iter().map(|n| n.name.clone()).collect(), ..Default::default() };
     for recipe_name in order {
+        report.recipes.insert(recipe_name.clone());
         let Some(units) = workspace.units_by_recipe.get(&recipe_name) else { continue };
         let wd = &units.working_dir;
         let mut hits: Vec<(PathBuf, FindingKind)> = Vec::new();

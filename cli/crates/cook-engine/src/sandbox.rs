@@ -13,11 +13,59 @@ pub const ROOT_ENV: &str = "COOK_SANDBOX_ROOT";
 /// Set (to a per-run directory the parent removes, ^C included) in the isolated child.
 pub const SCRATCH_ENV: &str = "COOK_SANDBOX_SCRATCH";
 
+/// Set (to a file descriptor number) in the isolated child: the write end of the
+/// pipe the child hands its result back on. A file in the scratch dir would be
+/// writable by every unit the child runs; a pipe end only cook holds is not.
+pub const HANDBACK_FD_ENV: &str = "COOK_SANDBOX_HANDBACK_FD";
+
 pub enum Isolation {
-    /// This process launched the isolated child, which exited with this code.
-    Parent(i32),
-    /// This process is the isolated child.
-    Inside,
+    /// This process launched the isolated child, which exited with this code
+    /// after sending this payload on the handback pipe (`None` unless exactly
+    /// one complete [`frame`] arrived).
+    Parent { code: i32, handback: Option<Vec<u8>> },
+    /// This process is the isolated child; `handback` is the pipe to the parent.
+    Inside { handback: Option<std::fs::File> },
+}
+
+/// One handback message: an 8-byte little-endian length, then the payload. The
+/// length is what tells a complete message from a child that died mid-write.
+pub fn frame(payload: &[u8]) -> Vec<u8> {
+    let mut out = (payload.len() as u64).to_le_bytes().to_vec();
+    out.extend_from_slice(payload);
+    out
+}
+
+/// The payload of `bytes` when it is exactly one complete [`frame`]; empty,
+/// short and over-long input are all `None`.
+pub fn unframe(bytes: &[u8]) -> Option<Vec<u8>> {
+    let (head, body) = bytes.split_at_checked(8)?;
+    let len = u64::from_le_bytes(head.try_into().ok()?);
+    (len == body.len() as u64).then(|| body.to_vec())
+}
+
+/// Called first thing in the isolated child, before anything is spawned: adopt
+/// the handback pipe and make sure no unit can reach it.
+#[cfg(target_os = "linux")]
+fn adopt_handback() -> Option<std::fs::File> {
+    use std::os::fd::FromRawFd;
+    let var = std::env::var(HANDBACK_FD_ENV).ok();
+    // Single-threaded here (nothing has started), so the environment is ours.
+    // A nested `cook` a unit runs must not find this variable and write to a
+    // stray descriptor of that number.
+    std::env::remove_var(HANDBACK_FD_ENV);
+    // Same uid and PID namespace: without this a unit could open
+    // /proc/<cook>/fd/N or ptrace cook to get at the pipe.
+    unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0) };
+    let fd: libc::c_int = var?.parse().ok().filter(|fd| *fd >= 3)?;
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    if unsafe { libc::fstat(fd, &mut st) } != 0 || st.st_mode & libc::S_IFMT != libc::S_IFIFO {
+        return None;
+    }
+    // Not inherited by anything cook spawns; a pipe every unit would inherit is no channel.
+    if unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) } != 0 {
+        return None;
+    }
+    Some(unsafe { std::fs::File::from_raw_fd(fd) })
 }
 
 /// The project root when this process runs inside an isolated view: [`ROOT_ENV`]
@@ -123,7 +171,7 @@ fn sweep_stale(scratch_root: &Path) {
 #[cfg(not(target_os = "linux"))]
 pub fn isolate(project_root: &Path) -> Result<Isolation, String> {
     if isolated_root().as_deref() == Some(project_root) {
-        return Ok(Isolation::Inside);
+        return Ok(Isolation::Inside { handback: None });
     }
     Err("isolation needs Linux user and mount namespaces".to_string())
 }
@@ -140,7 +188,7 @@ pub fn isolate(project_root: &Path) -> Result<Isolation, String> {
         .canonicalize()
         .map_err(|e| format!("cannot isolate the project: {}: {e}", project_root.display()))?;
     if isolated_root().as_deref() == Some(project_root) {
-        return Ok(Isolation::Inside);
+        return Ok(Isolation::Inside { handback: adopt_handback() });
     }
     if std::env::var_os(ROOT_ENV).is_some() {
         return Err(format!("{ROOT_ENV} is set but no overlay is mounted there; refusing to run unisolated"));
@@ -177,6 +225,15 @@ pub fn isolate(project_root: &Path) -> Result<Isolation, String> {
     let opts = cstr(
         format!("lowerdir={root},upperdir={},workdir={},userxattr", upper.display(), work.display()).as_bytes(),
     )?;
+    // The handback pipe; only the cook process (second fork, below) keeps its
+    // write end across exec.
+    let mut fds = [0; 2];
+    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+        return Err(err("handback pipe", std::io::Error::last_os_error()));
+    }
+    use std::os::fd::{FromRawFd, OwnedFd};
+    let (reader, writer) = unsafe { (std::fs::File::from(OwnedFd::from_raw_fd(fds[0])), OwnedFd::from_raw_fd(fds[1])) };
+    let wfd = fds[1];
     let uid_map = format!("{uid} {uid} 1");
     let gid_map = format!("{gid} {gid} 1");
 
@@ -185,6 +242,7 @@ pub fn isolate(project_root: &Path) -> Result<Isolation, String> {
         .args(std::env::args_os().skip(1))
         .env(ROOT_ENV, project_root)
         .env(SCRATCH_ENV, &run)
+        .env(HANDBACK_FD_ENV, wfd.to_string())
         // A unit that runs cook itself must not publish to the user's store
         // (its reads there are allowed: §17.9).
         .env(cook_cache::NO_PUBLISH_ENV, "1");
@@ -312,6 +370,7 @@ pub fn isolate(project_root: &Path) -> Result<Isolation, String> {
             libc::signal(libc::SIGINT, libc::SIG_DFL);
             libc::signal(libc::SIGTERM, libc::SIG_DFL);
             libc::signal(libc::SIGHUP, libc::SIG_DFL);
+            check(libc::fcntl(wfd, libc::F_SETFD, 0))?;
             Ok(())
         });
     }
@@ -337,7 +396,17 @@ pub fn isolate(project_root: &Path) -> Result<Isolation, String> {
             libc::signal(libc::SIGHUP, forward),
         )
     };
-    let status = cmd.spawn().and_then(|mut child| {
+    let spawned = cmd.spawn();
+    // The parent's copy must go or the drain below never sees EOF. Drained
+    // concurrently: the pipe holds 64 KiB, a baseline is far more.
+    drop(writer);
+    let drain = std::thread::spawn(move || {
+        use std::io::Read;
+        let mut buf = Vec::new();
+        let res = { reader }.read_to_end(&mut buf);
+        (buf, res)
+    });
+    let status = spawned.and_then(|mut child| {
         let pid = child.id() as i32;
         CHILD.store(pid, SeqCst);
         if let sig @ 1.. = PENDING.swap(0, SeqCst) {
@@ -354,6 +423,23 @@ pub fn isolate(project_root: &Path) -> Result<Isolation, String> {
         libc::signal(libc::SIGHUP, old_hup);
     }
 
+    let handback = match drain.join() {
+        Ok((buf, Ok(_))) => {
+            let msg = unframe(&buf);
+            if msg.is_none() && !buf.is_empty() {
+                tracing::warn!("sandbox handback is not one complete message ({} bytes); ignored", buf.len());
+            }
+            msg
+        }
+        Ok((_, Err(e))) => {
+            tracing::warn!("sandbox handback unreadable: {e}");
+            None
+        }
+        Err(_) => {
+            tracing::warn!("sandbox handback reader panicked");
+            None
+        }
+    };
     make_removable(&scratch);
     if let Err(e) = std::fs::remove_dir_all(&scratch) {
         tracing::warn!("sandbox scratch not removed: {e}");
@@ -361,7 +447,8 @@ pub fn isolate(project_root: &Path) -> Result<Isolation, String> {
     drop(lock);
     let status = status?;
     use std::os::unix::process::ExitStatusExt;
-    Ok(Isolation::Parent(status.code().or(status.signal().map(|s| 128 + s)).unwrap_or(1)))
+    let code = status.code().or(status.signal().map(|s| 128 + s)).unwrap_or(1);
+    Ok(Isolation::Parent { code, handback })
 }
 
 #[cfg(test)]

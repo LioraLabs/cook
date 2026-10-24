@@ -401,7 +401,7 @@ mod e2e {
         assert!(find(&r, FindingKind::Read, ".lintrc"), "{:?}", r.findings);
         assert!(find(&r, FindingKind::Absent, "missing.cfg"), "{:?}", r.findings);
         assert!(!r.findings.iter().any(|f| f.paths.iter().any(|p| p.contains("src/a.ts"))), "{:?}", r.findings);
-        assert_eq!(r.exit_code(), 1);
+        assert_eq!(r.exit_code(false), 1);
 
         let r = run_audit(&root, &[("srcs", "src/a.ts"), ("cfg", ".lintrc")]);
         assert_eq!(r.errors(), 0, "{:?}", r.units);
@@ -443,6 +443,9 @@ fn embedded_project_and_home_paths_are_elided() {
     assert_eq!(sp("/home/alex/x/proj/a/home/alex/.cfg"), "a/~/.cfg");
     assert_eq!(sp("/home/alex/x/proj/a/home/alex/x/project2/b"), "a/~/x/project2/b");
     assert_eq!(sp("/home/alex/.cfg"), "~/.cfg");
+    // Only a relative remainder is elided: an absolute path outside both stays as it is.
+    assert_eq!(sp("/srv/home/alex/x"), "/srv/home/alex/x");
+    assert_eq!(sp("/srv/home/alex/x/proj/y"), "/srv/home/alex/x/proj/y");
 }
 
 #[test]
@@ -703,4 +706,29 @@ fn a_member_lexically_inside_but_symlinked_out_is_refused() {
     assert!(refuse_members_outside(&root, [("ok", inside.as_path())]).is_ok());
     let err = refuse_members_outside(&root, [("lib", linked.as_path())]).unwrap_err();
     assert!(err.contains("workspace member `lib`") && err.contains("outside the project"), "{err}");
+}
+
+#[test]
+fn finding_kind_spellings_match_serde_and_all_is_exhaustive() {
+    for k in FindingKind::ALL {
+        // No wildcard: a new variant stops compiling here until it is in ALL.
+        match k {
+            FindingKind::Read | FindingKind::Absent | FindingKind::Env | FindingKind::EnvUnobserved => {}
+        }
+        assert_eq!(serde_json::to_value(k).unwrap(), k.as_str());
+    }
+    let distinct: std::collections::BTreeSet<_> = FindingKind::ALL.iter().collect();
+    assert_eq!(distinct.len(), 4);
+}
+
+#[test]
+fn exit_code_is_the_one_rule() {
+    let finding = Finding { recipe: "a".into(), kind: FindingKind::Read, root: "x".into(), count: 1, paths: vec!["x".into()] };
+    let unit = |status| UnitAudit { recipe: "a".into(), unit: "u".into(), key: "k".into(), status, detail: String::new() };
+    let mut r = AuditReport::default();
+    assert_eq!((r.exit_code(false), r.exit_code(true)), (0, 0));
+    r.findings.push(finding);
+    assert_eq!((r.exit_code(false), r.exit_code(true)), (1, 0));
+    r.units.push(unit("error"));
+    assert_eq!((r.exit_code(false), r.exit_code(true)), (1, 1));
 }

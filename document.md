@@ -560,7 +560,10 @@ the failure mode, so cook gives you tools to see the key:
   in CI on a different host), explicitly *not* a trust gate.
 - **`cook audit`**: on Linux, re-runs a recipe under a traced-read audit and
   reports every file a step read that it never declared. It only reports; it
-  never changes a key.
+  never changes a key. `cook audit --baseline` adds the current findings to
+  `cook-audit-baseline.json` (it never removes one; `--baseline --prune` keeps
+  only this run's literals, never a hand-written pattern); later audits then fail only on findings
+  it does not accept and name entries that no longer match as stale.
 
 Per-step **dispositions** control keying and sharing. `seal` (the verb from
 [Using probes](#using-probes)) folds declared determinants into the key, and a
