@@ -449,3 +449,33 @@ fn reconcile_keeps_a_recorded_empty_dir_under_any_root_spelling() {
         assert!(!wd.join("out/stray").exists(), "{root}: unrecorded empty dir kept");
     }
 }
+
+/// A glob output never walks outside the unit's working dir (CS-0275), even
+/// when registration was bypassed. The escaping forms here reach a sentinel
+/// inside the temp dir, so with the guard gone the walk finds it and never
+/// leaves the temp dir; an absolute glob under the working dir still matches.
+#[test]
+fn an_output_glob_leaving_the_unit_matches_nothing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let wd = tmp.path().join("a/proj");
+    std::fs::create_dir_all(wd.join("pkg/dist")).unwrap();
+    std::fs::write(wd.join("pkg/dist/x.js"), b"x").unwrap();
+    std::fs::create_dir_all(tmp.path().join("a/other")).unwrap();
+    std::fs::write(tmp.path().join("a/other/sentinel"), b"s").unwrap();
+    let outside = format!("{}/a/other/**", tmp.path().display());
+    for pattern in ["../**", "../other/*", "pkg/../../**", outside.as_str()] {
+        assert!(resolve_output_glob(&wd, pattern).is_empty(), "{pattern}");
+    }
+    let under = format!("{}/./pkg/dist/**", wd.display());
+    assert_eq!(resolve_output_glob(&wd, &under), BTreeSet::from([format!("{}/./pkg/dist/x.js", wd.display())]));
+}
+
+/// `//**` once walked the host from `/` (CS-0275); it returns at once, empty.
+/// Run only with the guard in place.
+#[test]
+fn a_root_anchored_output_glob_does_not_walk_the_host() {
+    let tmp = tempfile::tempdir().unwrap();
+    for pattern in ["//**", "//**/*", "/**"] {
+        assert!(resolve_output_glob(tmp.path(), pattern).is_empty(), "{pattern}");
+    }
+}

@@ -272,6 +272,16 @@ pub enum RegisterError {
     )]
     DirOutputIsPattern { recipe: String, output: String },
 
+    /// CS-0275: a glob output whose path leaves the unit's working directory
+    /// (`//**`, `/x/**`, `../gen/**`). Cook walks a glob output to record,
+    /// upload and sweep what it matches, and this walk would start outside the
+    /// project, at `/` for `//**`.
+    #[error(
+        "output {output:?} (recipe {recipe}) is a glob reaching outside the unit's working directory: \
+         Cook walks a glob output to record what it matches, so it must stay inside the project (outputs have no \"//\" project-root form); name a directory under it, e.g. \"dist/**\""
+    )]
+    GlobOutputLeavesUnit { recipe: String, output: String },
+
     /// CS-0219 §22.5.4: a `produce` body read a probe key it did not declare in
     /// `inputs.requires`. Also the guard against a produce body naming itself,
     /// which §22.5.9's `requires`-graph cycle check cannot see.

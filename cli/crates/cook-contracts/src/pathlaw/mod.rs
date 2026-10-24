@@ -37,7 +37,8 @@ pub fn is_dir_output(s: &str) -> bool {
 }
 
 /// The one lexical "does this output stay inside the unit" rule (CS-0274),
-/// read by registration, the build-owned sweep and the verify re-run.
+/// read by registration, the build-owned sweep, the verify re-run and
+/// [`glob_output_leaves_unit`].
 ///
 /// True when output declaration `p` names the unit's working directory `wd`
 /// itself, one of its ancestors, or anywhere outside it: `./`, `x/../`, `../`,
@@ -76,6 +77,15 @@ pub fn dir_output_refusal(p: &str, wd: &str) -> Option<DirOutputRefusal> {
     } else {
         None
     }
+}
+
+/// The one decision on whether a glob output `p` may be resolved (CS-0275),
+/// read by registration and by output resolution. A glob is walked from its
+/// literal leading directories, so one that [`output_leaves_unit`] (the working
+/// directory itself, an ancestor, or outside it) would walk outside the
+/// project. A literal output is not a glob: it may lie outside. Lexical.
+pub fn glob_output_leaves_unit(p: &str, wd: &str) -> bool {
+    has_glob_meta(p) && output_leaves_unit(p, wd)
 }
 
 /// `p` relative to `wd` when it is an absolute path under `wd`, else `p`

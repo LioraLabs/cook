@@ -430,6 +430,11 @@ pub fn resolve_output_glob(root: &Path, pattern: &str) -> BTreeSet<String> {
     if literal == parts.len() {
         return resolve_glob(root, pattern); // not a pattern: the one path, as named
     }
+    // Registration refuses such a glob (CS-0275); this holds when that was
+    // bypassed: `//**` would otherwise walk the host from `/`.
+    if cook_contracts::pathlaw::glob_output_leaves_unit(pattern, &root.to_string_lossy()) {
+        return out;
+    }
     // Without `**` nothing deeper than the pattern's own components can match.
     let depth = if parts[literal..].contains(&"**") { usize::MAX } else { parts.len() - literal };
     walk(root, &parts[..literal].join("/"), depth, &pat, &mut out);

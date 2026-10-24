@@ -1461,6 +1461,12 @@ impl BodyDriver {
                         }
                         None => {}
                     }
+                } else if cook_contracts::pathlaw::glob_output_leaves_unit(pattern, &wd)
+                {
+                    return Err(RegisterError::GlobOutputLeavesUnit {
+                        recipe: qualified_name.clone(),
+                        output: pattern.clone(),
+                    });
                 }
                 // One declaration = one warning. A fan-out step lowers into one
                 // unit per member from ONE add_unit call site, and a templated

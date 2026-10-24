@@ -1,6 +1,6 @@
 use super::{
     covers_root, covers_too_broad, dir_output_refusal, escapes_base, has_glob_meta, is_dir_output,
-    is_root_wildcard_output, normalize, output_leaves_unit, unit_relative, DirOutputRefusal,
+    glob_output_leaves_unit, is_root_wildcard_output, normalize, output_leaves_unit, unit_relative, DirOutputRefusal,
 };
 use std::path::{Path, PathBuf};
 
@@ -199,4 +199,19 @@ fn a_directory_output_is_refused_as_a_pattern_or_as_leaving_the_unit() {
     assert_eq!(dir_output_refusal("/w/pro[j]/./dist/", "/w/pro[j]"), Some(DirOutputRefusal::Pattern));
     assert_eq!(dir_output_refusal("/w/proj/./dist/", "/w/proj"), None);
     assert_eq!(dir_output_refusal("/w/pro[j]/*/", "/w/pro[j]"), Some(DirOutputRefusal::Pattern));
+}
+
+#[test]
+fn a_glob_output_leaving_the_unit_is_one_decision() {
+    let wd = "/w/proj";
+    for e in ["//**", "/**", "/x/**", "../gen/**", "x/../../*"] {
+        assert!(glob_output_leaves_unit(e, wd), "{e}");
+    }
+    for e in ["**", "dist/**", "./**", "/w/proj/./pkg/dist/**"] {
+        assert!(!glob_output_leaves_unit(e, wd), "{e}");
+    }
+    // A literal output outside the unit is not a glob.
+    for e in ["../x", "/etc/x"] {
+        assert!(!glob_output_leaves_unit(e, wd), "{e}");
+    }
 }
