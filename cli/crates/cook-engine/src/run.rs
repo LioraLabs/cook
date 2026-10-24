@@ -761,8 +761,19 @@ pub(crate) fn build_cache_ctx_with(
             cloud_config.backend_config(),
         ))
     };
+    // On stderr, not tracing: nothing installs a subscriber, and a wrong token
+    // or an unreachable server must be visible. The build goes on: a failed
+    // lookup is a miss and a failed upload is dropped. The backend stays in
+    // use, so the wording promises no more than that. `e` carries the status
+    // and server body, never the token. Once per process: one invocation
+    // builds more than one cache context.
     if let Err(e) = backend.health() {
-        tracing::warn!("cache backend unavailable: {e}; continuing with backend disabled");
+        static WARNED: std::sync::Once = std::sync::Once::new();
+        WARNED.call_once(|| {
+            eprintln!(
+                "cook: warning: cache store unavailable ({e}); building anyway: lookups that fail are misses, uploads that fail are dropped"
+            )
+        });
     }
     // CS-0196 (COOK-364): key-side identity is configured-or-empty. The
     // directory-name fallback never enters a key.

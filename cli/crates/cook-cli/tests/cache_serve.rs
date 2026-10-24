@@ -610,6 +610,31 @@ fn puts_claiming_every_exempt_kind_are_reclaimed_by_a_store_size_sweep() {
     assert!(!manifest.exists(), "the manifest beside an exempt-kind blob survived --max-size");
 }
 
+#[test]
+fn a_wrong_token_is_a_miss_with_a_warning_never_a_failed_build() {
+    let tmp = TempDir::new().unwrap();
+    let (_served, addr, _log) = start(&tmp);
+    let wd = checkout(&tmp, "wrong", &addr, CP_UNIT, true);
+    let wrong = "not-the-servers-token";
+    let out = Command::new(env!("CARGO_BIN_EXE_cook"))
+        .arg("build")
+        .current_dir(&wd)
+        .env("XDG_CACHE_HOME", tmp.path().join("xdg-wrong"))
+        .env(API_KEY_ENV, wrong)
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "a refused token must not fail the build:\n{err}");
+    assert_eq!(runs(&wd, "build.runlog"), 1, "the unit ran: a miss");
+    assert_eq!(
+        err.matches("cook: warning: cache store unavailable").count(),
+        1,
+        "stderr should say once that the store refused the token: {err}"
+    );
+    assert!(err.contains("401"), "the warning names the refusal: {err}");
+    assert!(!err.contains(wrong), "the token never reaches stderr: {err}");
+}
+
 // ── COOK-617 (CS-0278): a root-marker declaration is keyed and recorded unit-relative ──
 
 /// A unit declared the cook_pnpm way: `fs.glob("././Cookfile")` joins the working directory with the
