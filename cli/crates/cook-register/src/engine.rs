@@ -1495,7 +1495,7 @@ impl BodyDriver {
             if let Some(meta) = unit.cache_meta.as_mut() {
                 meta.recipe_name = name.to_string();
                 if let (true, Some(path)) = (file_member_source, unit.member.clone()) {
-                    let input = cook_contracts::cache::DeclaredInput::path(path);
+                    let input = cook_contracts::cache::DeclaredInput::path(cook_contracts::pathlaw::unit_relative(&path, &wd));
                     if !meta.inputs.contains(&input) {
                         meta.inputs.push(input);
                     }

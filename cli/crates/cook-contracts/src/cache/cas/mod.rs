@@ -264,7 +264,7 @@ pub struct CloudKeyInputs<'a> {
     /// COOK-161 / CS-0107: the unit's effective-seal-set value fold (see
     /// `StepEntry.seal_contribution`). Zero for an unsealed unit.
     pub seal_contribution: u64,
-    /// The unit's output declaration as written, in declared order — globs
+    /// The unit's output declaration as `CacheMeta` records it (unit-relative, CS-0278), in declared order — globs
     /// and directory entries unresolved (§{exec.cache.single-key}'s "declared
     /// output paths", CS-0276). Empty for an observing unit. Not the resolved
     /// names: a consumer composes K before anything has been produced.

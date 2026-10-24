@@ -43,7 +43,7 @@ pub fn is_dir_output(s: &str) -> bool {
 /// True when output declaration `p` names the unit's working directory `wd`
 /// itself, one of its ancestors, or anywhere outside it: `./`, `x/../`, `../`,
 /// `/x`, `<wd>`, `<wd>/../x`. Lexical: `p` is read relative to `wd`, an absolute
-/// `p` lying under `wd` is first rebased onto it (`<wd>/./dist/` is `./dist/`,
+/// `p` lying under `wd` is first rebased onto it (`<wd>/./dist/` is `dist/`,
 /// the form cook_pnpm declares), and any other absolute `p` leaves. Symlinks are
 /// not followed, and glob metacharacters mean nothing here: `**/` is inside by
 /// this rule, and refusing a pattern as a directory output is a separate check.
@@ -88,12 +88,23 @@ pub fn glob_output_leaves_unit(p: &str, wd: &str) -> bool {
     has_glob_meta(p) && output_leaves_unit(p, wd)
 }
 
-/// `p` relative to `wd` when it is an absolute path under `wd`, else `p`
-/// unchanged. The rebasing step of [`output_leaves_unit`].
+/// `p` relative to `wd` when it is an absolute path under `wd` (leading `./`
+/// segments dropped: `<wd>/././dist/**` is `dist/**`, `<wd>/./` is empty), else
+/// `p` byte-identical — a relative `./out/` stays `./out/` (CS-0276). The one
+/// rule for keying and recording a declaration (CS-0278); also the rebasing
+/// step of [`output_leaves_unit`]. Unlike [`strip_dot_slash`], rebased paths
+/// drop every leading `./`; relative declarations keep theirs (CS-0276, two keys).
 pub fn unit_relative(p: &str, wd: &str) -> String {
-    match rebase(p, wd.trim_end_matches('/'), "") {
-        Some(rest) => rest.trim_start_matches('/').to_string(),
-        None => p.to_string(),
+    let Some(rest) = rebase(p, wd.trim_end_matches('/'), "") else { return p.to_string() };
+    let mut rest = rest.trim_start_matches('/');
+    loop {
+        if let Some(r) = rest.strip_prefix("./") {
+            rest = r.trim_start_matches('/');
+        } else if rest == "." {
+            rest = "";
+        } else {
+            return rest.to_string();
+        }
     }
 }
 

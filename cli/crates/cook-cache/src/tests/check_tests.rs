@@ -1406,3 +1406,15 @@ fn streamed_hash_file_matches_the_one_shot_digest_across_buffers() {
     std::fs::write(&path, &body).unwrap();
     assert_eq!(hash_file(&path), Some(xxhash_rust::xxh3::xxh3_64(&body)));
 }
+
+/// COOK-617 (CS-0278): registration now hands the cache unit-relative paths, so the restore guard
+/// need not (and must not) accept absolute or escaping ones.
+#[test]
+fn restorable_refuses_absolute_and_escaping_paths_but_takes_unit_relative_ones() {
+    for bad in ["/elsewhere/x", "x/../y", "../x", "/w/proj/././dist/a.js", "dist/./a.js", ""] {
+        assert!(!crate::restorable(bad), "{bad}");
+    }
+    for ok in ["dist/a.js", "./dist/a.js", "a.txt"] {
+        assert!(crate::restorable(ok), "{ok}");
+    }
+}

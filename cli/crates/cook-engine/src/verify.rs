@@ -262,9 +262,9 @@ pub fn rerun_in_sandbox(
         "" => "/",
         t => t,
     };
-    // Checked before anything runs. An output declared as an absolute path under the working dir (cook_pnpm
-    // declares `<root>/././dist/**`) names the real tree; read it from the
-    // sandbox instead, and name what it finds as the real run recorded it.
+    // Checked before anything runs. An output declared as an absolute path under the working dir
+    // names the real tree; read it from the sandbox instead, and name what it finds as the real run
+    // recorded it. (Registered units arrive unit-relative, CS-0278; this guards anything absolute.)
     let mut declared = Vec::with_capacity(declared_outputs.len());
     for p in declared_outputs {
         // Lexical, so `<wd>/../x` is outside (CS-0274's one rule).

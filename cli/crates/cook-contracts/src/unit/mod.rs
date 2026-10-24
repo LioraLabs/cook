@@ -188,7 +188,8 @@ pub struct CapturedUnit {
     /// (COOK-221/CS-0137).
     pub member: Option<String>,
     /// COOK-96: this unit's declared output paths, retained so the engine can
-    /// key them by `member` for the per-member map.
+    /// key them by `member` for the per-member map. As written, unlike
+    /// `CacheMeta.output_paths` (unit-relative, CS-0278).
     pub output_paths: Vec<String>,
     /// CS-0219: declared output paths of units this one must run after, within
     /// the same recipe. Each entry names a path some EARLIER unit of the same

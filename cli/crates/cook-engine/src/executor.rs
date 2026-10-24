@@ -3457,7 +3457,7 @@ fn empty_dir_outputs(
 
 /// The cloud key (spec §5.3) `meta`'s unit composes over `sorted_hashes`: the
 /// one place a `CacheMeta` becomes `CloudKeyInputs`, so every key folds the
-/// same declaration — the output paths as written.
+/// same declaration — the output paths as `CacheMeta` records them (unit-relative, CS-0278).
 pub(crate) fn meta_cloud_key(
     meta: &cook_contracts::CacheMeta,
     seal_contribution: u64,

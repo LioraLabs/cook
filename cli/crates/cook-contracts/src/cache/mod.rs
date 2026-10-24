@@ -123,7 +123,10 @@ pub struct CacheMeta {
     /// path or a pattern (§17.1.1.2, CS-0186). A pattern entry is resolved
     /// when the unit becomes ready, because a consumed output declared
     /// `dist/**` names no file at registration; a path entry is used as
-    /// written, whatever characters are in it.
+    /// written, whatever characters are in it. Paths lying under the working
+    /// dir are unit-relative per `pathlaw::unit_relative` (CS-0278); the unit
+    /// payload keeps the declaration as written, so never compare the two by
+    /// string.
     pub inputs: Vec<DeclaredInput>,
     /// An allowlist narrowing the PATTERN-derived half of [`Self::inputs`]
     /// after resolution (§17.1.1.2, CS-0175 as amended by CS-0186). Empty means
@@ -143,6 +146,9 @@ pub struct CacheMeta {
     /// cache needs from it is the one fact §17.4 rule 1 asks for — that there
     /// IS something to key on when the unit declares no file and no output.
     pub member_keyed: bool,
+    /// Declared outputs, unit-relative per `pathlaw::unit_relative` when under
+    /// the working dir (CS-0278); `CapturedUnit.output_paths` keeps the
+    /// declaration as written, so never compare the two by string.
     pub output_paths: Vec<String>,
     pub command_hash: u64,
     pub env_contribution: u64,

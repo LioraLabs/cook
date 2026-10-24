@@ -1580,3 +1580,36 @@ fn a_test_unit_in_a_step_group_is_grouped_like_any_other_unit() {
 // uses the register-phase `cook.dep_output` surface, which this harness does
 // not bind; duplicating it here with a hand-set body field would test the
 // harness rather than the wiring.
+
+#[test]
+fn add_unit_keys_an_under_wd_declaration_unit_relative_and_leaves_the_payload_as_written() {
+    // CS-0278: cook_pnpm's root-marker form (`<wd>/././dist/**`) is cache-side
+    // `dist/**`; the unit's payload outputs stay as written.
+    let (lua, body_slot) = make_lua_with_unit_api("demo");
+    lua.set_app_data(fake_cache_ctx());
+    lua.set_named_registry_value("__cook_cookfile_path", "Cookfile".to_string()).expect("set");
+    let wd = std::env::current_dir().unwrap().to_string_lossy().into_owned();
+    lua.globals().set("WD", wd.clone()).unwrap();
+    lua.load(
+        r#"
+            cook.add_unit({
+                command = "mkdir -p dist",
+                inputs = { WD .. "/./src/in.txt", "src/in.txt", "/elsewhere/in.txt" },
+                outputs = { WD .. "/././dist/**", "./out/" },
+            })
+        "#,
+    )
+    .exec()
+    .unwrap();
+
+    let state = body_ref(&body_slot);
+    let meta = state.units[0].cache_meta.as_ref().expect("cache_meta present");
+    assert_eq!(meta.output_paths, vec!["dist/**".to_string(), "./out/".to_string()]);
+    // `<wd>/./src/in.txt` and `src/in.txt` are one input; the outside path is unchanged.
+    assert_eq!(paths(&meta.inputs), vec!["src/in.txt".to_string(), "/elsewhere/in.txt".to_string()]);
+    assert_eq!(
+        state.units[0].output_paths,
+        vec![format!("{wd}/././dist/**"), "./out/".to_string()],
+        "the unit payload keeps the declaration as written"
+    );
+}

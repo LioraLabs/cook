@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- **A `cook_pnpm` build unit hits across checkouts and in its own.**
+  (COOK-617, CS-0278). A declaration written as an absolute path under
+  the working directory (`<wd>/././dist/**`) was keyed and recorded as
+  written, so two checkouts never shared a key and the recorded absolute
+  paths made the unit's manifest read as absent. Such a path is now keyed
+  and recorded unit-relative. Keys of these units move once; relative
+  declarations' keys are unchanged.
+
 - **`cook cache gc --store` sizes every kind alike.** On a store
   `cook cache serve` serves, an entry's kind is whatever its put claimed,
   so a put claiming a manifest, symlink or directory kind kept its bytes

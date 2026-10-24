@@ -478,6 +478,7 @@ pub fn register_unit_api(
         // Deduplicated, order of first occurrence (COOK-84): a path named by
         // both `inputs` and a step-group dep arrives twice, and what a unit
         // declares must not depend on how many ways a file was reached.
+        let wd_str = wd_for_add_unit.to_string_lossy().into_owned();
         let cache_inputs: Vec<cook_contracts::cache::DeclaredInput> = {
             let mut out: Vec<cook_contracts::cache::DeclaredInput> = Vec::new();
             let mut push = |e: cook_contracts::cache::DeclaredInput| {
@@ -491,7 +492,11 @@ pub fn register_unit_api(
                 .chain(dep_input_paths.iter().map(|s| s.as_str()))
                 .chain(member_dep_input_paths.iter().map(|s| s.as_str()))
             {
-                push(classify_declared_input(&wd_for_add_unit, p));
+                // Kind from the declaration as written; the path keyed and
+                // recorded is its unit-relative part (CS-0278).
+                let mut e = classify_declared_input(&wd_for_add_unit, p);
+                e.path = cook_contracts::pathlaw::unit_relative(p, &wd_str);
+                push(e);
             }
             out
         };
@@ -808,12 +813,16 @@ pub fn register_unit_api(
                 !seal_keys.is_empty(),
             );
         let cache_meta = if cache_enabled {
+            // Keyed and recorded unit-relative (CS-0278); the payload keeps the
+            // declaration as written.
+            let cache_outputs: Vec<String> =
+                output_paths.iter().map(|o| cook_contracts::pathlaw::unit_relative(o, &wd_str)).collect();
             let local_seal_keys: std::collections::BTreeSet<String> =
                 seal_keys.iter().map(ToString::to_string).collect();
             let cache_key = cook_contracts::cache::local_key::build_local_cache_key(
                 &cookfile_path,
                 &rname,
-                &output_paths,
+                &cache_outputs,
                 &cache_inputs,
                 command_hash,
                 env_contribution_val,
@@ -827,7 +836,7 @@ pub fn register_unit_api(
                 inputs: cache_inputs.clone(),
                 consumes: consumes.clone(),
                 member_keyed,
-                output_paths: output_paths.clone(),
+                output_paths: cache_outputs,
                 command_hash,
                 env_contribution: env_contribution_val,
                 consulted_env,

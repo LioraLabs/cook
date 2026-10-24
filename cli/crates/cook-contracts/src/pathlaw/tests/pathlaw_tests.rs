@@ -179,7 +179,7 @@ fn outputs_leaving_the_unit() {
     assert!(output_leaves_unit("/", "/"));
     // A working dir whose own name holds glob metacharacters is still a prefix.
     assert!(!output_leaves_unit("/w/pro[j]/./dist/", "/w/pro[j]"));
-    assert_eq!(unit_relative("/w/pro[j]/./dist/", "/w/pro[j]"), "./dist/");
+    assert_eq!(unit_relative("/w/pro[j]/./dist/", "/w/pro[j]"), "dist/");
     assert_eq!(unit_relative("dist/", "/w/pro[j]"), "dist/");
     // Trailing slash on the working dir changes nothing.
     assert!(!output_leaves_unit("/w/proj/./dist/", "/w/proj/"));
@@ -213,5 +213,30 @@ fn a_glob_output_leaving_the_unit_is_one_decision() {
     // A literal output outside the unit is not a glob.
     for e in ["../x", "/etc/x"] {
         assert!(!glob_output_leaves_unit(e, wd), "{e}");
+    }
+}
+
+#[test]
+fn unit_relative_drops_root_marker_segments_and_leaves_the_rest_byte_identical() {
+    let wd = "/w/proj";
+    for (p, want) in [
+        ("/w/proj/././dist/**", "dist/**"),
+        ("/w/proj/./dist/", "dist/"),
+        ("/w/proj/./", ""),
+        ("/w/proj/.", ""),
+        ("/w/proj", ""),
+        ("/w/proj/dist/./x", "dist/./x"),
+        ("/w/proj/./../x", "../x"),
+        ("/w/proj/../x", "../x"),
+        // not under wd, or relative: byte-identical
+        ("./out/", "./out/"),
+        ("out/", "out/"),
+        ("././out/", "././out/"),
+        ("/elsewhere/x", "/elsewhere/x"),
+        ("/w/projx/dist/", "/w/projx/dist/"),
+        ("x/../y", "x/../y"),
+    ] {
+        assert_eq!(unit_relative(p, wd), want, "{p}");
+        assert_eq!(unit_relative(p, "/w/proj/"), want, "{p} (trailing slash wd)");
     }
 }

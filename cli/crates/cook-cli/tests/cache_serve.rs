@@ -609,3 +609,75 @@ fn puts_claiming_every_exempt_kind_are_reclaimed_by_a_store_size_sweep() {
     }
     assert!(!manifest.exists(), "the manifest beside an exempt-kind blob survived --max-size");
 }
+
+// ── COOK-617 (CS-0278): a root-marker declaration is keyed and recorded unit-relative ──
+
+/// A unit declared the cook_pnpm way: `fs.glob("././Cookfile")` joins the working directory with the
+/// pattern as written, so the declaration below is `<abs wd>/././dist/**`. The command is relative, so
+/// its hash is the same in every checkout.
+const ROOT_MARKER_UNIT: &str = r#"recipe build
+    cook.add_unit({
+        name    = "build-step",
+        inputs  = { fs.glob("././Cookfile")[1]:match("^(.*)/Cookfile$") .. "/src/in.txt" },
+        outputs = { fs.glob("././Cookfile")[1]:match("^(.*)/Cookfile$") .. "/dist/**" },
+        command = "mkdir -p dist && cp src/in.txt dist/a.js && echo ran >> build.runlog",
+    })
+"#;
+
+/// The cloud key `cook why` reports for the unit.
+fn why_cloud_key(tmp: &TempDir, wd: &std::path::Path) -> String {
+    let out = run_in(tmp, wd, &["why", "build", "--level", "unit"]);
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    let line = text.lines().find(|l| l.contains("  key ")).unwrap_or_else(|| panic!("no key line in:\n{text}"));
+    line.rsplit("key ").next().unwrap().trim().to_string()
+}
+
+/// No stored manifest names an absolute path (or the checkout) in what it records.
+fn assert_manifests_relative(tmp: &TempDir) {
+    let ms = manifests_in(&tmp.path().join("store"));
+    assert!(!ms.is_empty(), "A published a manifest");
+    let root = tmp.path().to_string_lossy().into_owned();
+    for m in ms {
+        let text = std::fs::read_to_string(&m).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let mut names: Vec<String> = json["inputs"].as_object().map(|o| o.keys().cloned().collect()).unwrap_or_default();
+        names.extend(json["output_paths"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(String::from)));
+        assert!(!names.is_empty(), "manifest records paths: {text}");
+        for n in names {
+            assert!(!n.starts_with('/') && !n.contains(&root), "absolute path `{n}` in manifest {text}");
+        }
+    }
+}
+
+#[test]
+fn a_root_marker_unit_built_in_one_checkout_is_a_shared_hit_in_another() {
+    let tmp = TempDir::new().unwrap();
+    let (_served, addr, _log) = start(&tmp);
+    let a = checkout(&tmp, "a", &addr, ROOT_MARKER_UNIT, true);
+    run_in(&tmp, &a, &["build"]);
+    assert_eq!(runs(&a, "build.runlog"), 1);
+    assert_manifests_relative(&tmp);
+
+    let b = checkout(&tmp, "b", &addr, ROOT_MARKER_UNIT, true);
+    assert_eq!(why_cloud_key(&tmp, &a), why_cloud_key(&tmp, &b), "the key does not depend on where the checkout lies");
+    run_in(&tmp, &b, &["build"]);
+    assert_eq!(runs(&b, "build.runlog"), 0, "B restores, never runs");
+    assert_eq!(std::fs::read(b.join("dist/a.js")).unwrap(), std::fs::read(a.join("dist/a.js")).unwrap());
+}
+
+#[test]
+fn a_root_marker_unit_is_a_shared_hit_in_the_checkout_that_published_it() {
+    let tmp = TempDir::new().unwrap();
+    let (_served, addr, _log) = start(&tmp);
+    let a = checkout(&tmp, "a", &addr, ROOT_MARKER_UNIT, true);
+    run_in(&tmp, &a, &["build"]);
+    assert_eq!(runs(&a, "build.runlog"), 1);
+
+    // Lose every local record and the output: only the server remembers.
+    let _ = std::fs::remove_dir_all(tmp.path().join("xdg-a"));
+    std::fs::remove_dir_all(a.join(".cook/cache")).expect("local records live in .cook/cache");
+    std::fs::remove_dir_all(a.join("dist")).unwrap();
+    run_in(&tmp, &a, &["build"]);
+    assert_eq!(runs(&a, "build.runlog"), 1, "restored from the store, not rebuilt");
+    assert!(a.join("dist/a.js").is_file());
+}

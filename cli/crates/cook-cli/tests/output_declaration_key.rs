@@ -150,3 +150,16 @@ fn cook_why_reports_one_key_per_output_declaration() {
         assert!(shown.contains(last), "{b}: why does not name the declaration:\n{shown}");
     }
 }
+
+/// CS-0278: a relative declaration's cloud key is a constant. Hardcoded from the base commit (before
+/// absolute-under-wd declarations were keyed unit-relative), in two different directories, so a change
+/// to how relative declarations fold is a change to every published key.
+#[test]
+fn relative_declarations_keep_their_cloud_keys() {
+    for (decl, pinned) in [("\"dist/**\"", "c10414dec6bde9d48c153bca01af86874d915afc80d071cba2324174a9274bb8"), ("\"./dist/**\"", "dc3b61c1566cbd115b578e0bb6dfc670ca4801a9f21a5e546e7cf616a684be5b")] {
+        let (a, b) = (workspace(decl), workspace(decl));
+        let (ka, kb) = (why_key(a.path()), why_key(b.path()));
+        assert_eq!(ka, kb, "{decl}: the key does not depend on the directory");
+        assert_eq!(ka, pinned, "{decl}");
+    }
+}
