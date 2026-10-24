@@ -564,6 +564,7 @@ the failure mode, so cook gives you tools to see the key:
   `cook-audit-baseline.json` (it never removes one; `--baseline --prune` keeps
   only this run's literals, never a hand-written pattern); later audits then fail only on findings
   it does not accept and name entries that no longer match as stale.
+  `env` findings can differ between environments when a tool's own lookups depend on a value, so regenerate the baseline in every environment the gate runs in (for example once in CI, without `--prune`); the baseline is a union across them.
 
 Per-step **dispositions** control keying and sharing. `seal` (the verb from
 [Using probes](#using-probes)) folds declared determinants into the key, and a
