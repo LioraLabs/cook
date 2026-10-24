@@ -145,6 +145,7 @@ pub fn run<F>(
     no_prune: bool,
     no_publish: bool,
     replay_logs: bool,
+    failed_puts: Arc<cook_cache::cache_ctx::FailedPuts>,
     on_event: F,
 ) -> Result<RunResult, EngineError>
 where
@@ -180,6 +181,7 @@ where
         num_jobs,
         rerun_patterns,
         no_prune,
+        failed_puts,
         on_event,
     )
 }
@@ -195,6 +197,7 @@ pub(crate) fn run_with_cache_ctx<F>(
     num_jobs: usize,
     rerun_patterns: &[String],
     no_prune: bool,
+    failed_puts: Arc<cook_cache::cache_ctx::FailedPuts>,
     on_event: F,
 ) -> Result<RunResult, EngineError>
 where
@@ -210,6 +213,7 @@ where
         &on_event,
         rerun_patterns,
         no_prune,
+        failed_puts,
     );
     let success = result.as_ref().is_ok_and(|run| {
         run.test_results.iter().all(|test| {
@@ -236,6 +240,7 @@ fn run_inner<F>(
     on_event: &F,
     rerun_patterns: &[String],
     no_prune: bool,
+    failed_puts: Arc<cook_cache::cache_ctx::FailedPuts>,
 ) -> Result<RunResult, EngineError>
 where
     F: Fn(EngineEvent) + Send + Sync,
@@ -498,10 +503,7 @@ where
     // bumped once per publish inside the executor, read back below once every
     // worker has joined. Only its zero / non-zero-ness is consumed. See
     // `RunResult::published_count` for what the gate does and does not claim.
-    let published = executor::Published {
-        failed: cook_cache::cache_ctx::FailedPuts::after(registered_workspace.upload_failure_told),
-        ..Default::default()
-    };
+    let published = executor::Published { failed: failed_puts, ..Default::default() };
     let probe_values = cook_probe::store::ProbeValueStore::new();
 
     let (event_tx, event_rx) = mpsc::channel::<EngineEvent>();

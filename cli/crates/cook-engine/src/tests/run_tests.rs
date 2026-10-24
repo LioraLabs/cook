@@ -33,7 +33,6 @@ fn dummy_project_root() -> std::path::PathBuf {
             alias_dirs_by_prefix: BTreeMap::new(),
             terminal_outputs: BTreeMap::new(),
             materializations: Vec::new(),
-            upload_failure_told: false,
         }
     }
 
@@ -54,6 +53,7 @@ fn dummy_project_root() -> std::path::PathBuf {
             false,
             false,
         false,
+            Default::default(),
             |_| {},
         );
         assert!(result.is_ok());
@@ -79,6 +79,7 @@ fn dummy_project_root() -> std::path::PathBuf {
         false,
         false,
         false,
+        Default::default(),
         |_| {},
     );
     assert!(result.is_err());
@@ -105,6 +106,7 @@ fn test_run_emits_finished_success_on_empty_reachable() {
         false,
         false,
         false,
+        Default::default(),
         |event| events.lock().unwrap().push(event),
     );
     assert!(result.is_ok());
@@ -139,6 +141,7 @@ fn test_run_emits_finished_failure_on_unknown_recipe() {
         false,
         false,
         false,
+        Default::default(),
         |event| events.lock().unwrap().push(event),
     );
     assert!(result.is_err());
@@ -322,7 +325,6 @@ fn cook510_member_consumer_local_srcs_hashes_member_src_a_txt() {
         alias_dirs_by_prefix: BTreeMap::new(),
         terminal_outputs: BTreeMap::new(),
         materializations: Vec::new(),
-        upload_failure_told: false,
     };
 
     let mut edges: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -339,6 +341,7 @@ fn cook510_member_consumer_local_srcs_hashes_member_src_a_txt() {
         false,
         false,
         false,
+        Default::default(),
         |_| {},
     );
     assert!(result.is_ok(), "run() failed: {:?}", result.err());
@@ -410,7 +413,7 @@ fn each_run_in_one_process_reports_an_unavailable_store() {
     let ws = empty_registered_workspace();
     let (edges, reachable) = (BTreeMap::new(), BTreeSet::new());
     let run_once = || {
-        run(root.path(), &ws, &edges, &reachable, 1, &[], false, false, false, |_| {}).unwrap();
+        run(root.path(), &ws, &edges, &reachable, 1, &[], false, false, false, Default::default(), |_| {}).unwrap();
     };
     let seen = warnings_during(|| {
         run_once();

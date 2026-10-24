@@ -406,6 +406,7 @@ pub fn verify_cache(
     edges: &BTreeMap<String, Vec<String>>,
     reachable: &BTreeSet<String>,
     num_jobs: usize,
+    failed_puts: std::sync::Arc<cook_cache::cache_ctx::FailedPuts>,
 ) -> Result<VerifyReport, String> {
     // 1. Populate: a normal run records StepEntry.outputs (path,hash) per unit.
     let run_result = crate::run::run(
@@ -418,6 +419,7 @@ pub fn verify_cache(
         /*no_prune*/ false,
         /*no_publish*/ true,
         /*replay_logs*/ false,
+        failed_puts,
         |_e| {},
     )
     .map_err(|e| format!("populate run failed: {e}"))?;

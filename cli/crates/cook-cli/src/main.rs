@@ -121,7 +121,7 @@ fn dispatch(cli: Cli) -> Result<(), CookError> {
     ) {
         warn_if_builtin_shadows_recipe(&globals);
     }
-    match cmd {
+    let result = match cmd {
         None => cmd_run(&globals, "build", &[], None),
         Some(Cmd::Init) => cmd_init(),
         Some(Cmd::Menu) => cmd_menu(&globals),
@@ -189,7 +189,10 @@ fn dispatch(cli: Cli) -> Result<(), CookError> {
             cmd_why(&globals, &args)
         }
         Some(Cmd::Recipe(parts)) => dispatch_recipe(&globals, &parts),
-    }
+    };
+    // The one place an invocation tells its failed puts, success or not.
+    globals.failed_puts.summarize();
+    result
 }
 
 fn dispatch_recipe(globals: &cli::Globals, parts: &[String]) -> Result<(), CookError> {

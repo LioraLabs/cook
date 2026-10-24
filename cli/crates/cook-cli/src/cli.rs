@@ -32,6 +32,10 @@ pub struct Cli {
 
 #[derive(clap::Args, Debug, Default, Clone)]
 pub struct Globals {
+    /// The invocation's one failed-put record; clones share it.
+    #[arg(skip)]
+    pub failed_puts: std::sync::Arc<cook_engine::cook_cache::cache_ctx::FailedPuts>,
+
     /// Path to Cookfile
     #[arg(short = 'f', long = "file", default_value = "Cookfile", global = true)]
     pub file: PathBuf,

@@ -745,6 +745,7 @@ fn run_with_progress(
         no_prune,
         no_publish,
         globals.replay_logs,
+        globals.failed_puts.clone(),
         move |event| {
             let _ = engine_tx.send(event);
         },
@@ -933,6 +934,7 @@ fn build_registered_workspace_with(
         &globals.set,
         mode,
         Some(cache_ctx.clone()),
+        globals.failed_puts.clone(),
     )
     .map_err(pipeline_error_to_cook_error)?;
     // The register pass evaluates probes whose values decide the DAG's shape,
@@ -1003,7 +1005,14 @@ pub fn cmd_cache_verify(
     let project_root = resolve_project_root(globals)?;
 
     let report =
-        cook_engine::verify::verify_cache(&project_root, &registered, &edges, &reachable, num_jobs)
+        cook_engine::verify::verify_cache(
+            &project_root,
+            &registered,
+            &edges,
+            &reachable,
+            num_jobs,
+            globals.failed_puts.clone(),
+        )
             .map_err(CookError::Other)?;
 
     if args.json {
@@ -1012,6 +1021,7 @@ pub fn cmd_cache_verify(
         print_verify_human(&report);
     }
     if report.exit_code() != 0 {
+        globals.failed_puts.summarize(); // exit skips dispatch's summary
         std::process::exit(report.exit_code());
     }
     Ok(())
@@ -1185,7 +1195,7 @@ fn audit_isolated(
         Some(ctx.clone()),
     )?;
     let (edges, reachable) = resolve_reachable_closure(&registered, &[recipe_name.to_string()])?;
-    cook_engine::audit::audit(root, &registered, &edges, &reachable, resolve_num_jobs(globals), ctx)
+    cook_engine::audit::audit(root, &registered, &edges, &reachable, resolve_num_jobs(globals), ctx, globals.failed_puts.clone())
         .map_err(CookError::Other)
 }
 
@@ -1590,6 +1600,7 @@ pub fn cmd_test(
             no_prune_enabled(globals),
             no_publish_enabled(globals),
             globals.replay_logs,
+            globals.failed_puts.clone(),
             on_event,
         );
         let _ = bridge_thread.join();
@@ -1767,6 +1778,7 @@ fn collect_workspace_recipe_names(globals: &Globals) -> Option<std::collections:
         /*config*/ None,
         &globals.set,
         Some(cache_ctx),
+        globals.failed_puts.clone(),
     )
     .ok()?;
     Some(
@@ -1835,7 +1847,7 @@ pub fn warn_if_builtin_shadows_recipe(globals: &Globals) {
         return;
     };
     let Ok(names) =
-        pipeline::list_workspace_names_cached(&workspace, None, &globals.set, Some(cache_ctx))
+        pipeline::list_workspace_names_cached(&workspace, None, &globals.set, Some(cache_ctx), globals.failed_puts.clone())
     else {
         return;
     };
@@ -1874,6 +1886,7 @@ pub fn cmd_menu(globals: &Globals) -> Result<(), CookError> {
         /*config*/ None,
         &globals.set,
         Some(cache_ctx),
+        globals.failed_puts.clone(),
     )
     .map_err(pipeline_error_to_cook_error)?;
     warn_if_invoked_builtin_is_registered(names.iter().map(|r| (r.name.as_str(), &r.kind)));
@@ -2178,6 +2191,7 @@ pub fn cmd_serve(
 
     eprintln!("cook serve: initial build...");
     let _ = cmd_run(globals, recipe_name, &[], config);
+    globals.failed_puts.summarize();
 
     eprintln!("cook serve: watching for changes...");
     watcher
@@ -2185,7 +2199,11 @@ pub fn cmd_serve(
             if cookfile_changed {
                 eprintln!("cook serve: Cookfile changed, rebuilding...");
             }
-            cmd_run(globals, recipe_name, &[], config).map_err(|e| e.to_string())?;
+            // A long-lived serve names a failed put once per rebuild, not once ever.
+            let cycle = Globals { failed_puts: Default::default(), ..globals.clone() };
+            let result = cmd_run(&cycle, recipe_name, &[], config);
+            cycle.failed_puts.summarize();
+            result.map_err(|e| e.to_string())?;
             Ok(())
         })
         .map_err(|e| CookError::Other(e.to_string()))?;

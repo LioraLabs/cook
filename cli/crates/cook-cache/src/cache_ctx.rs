@@ -24,43 +24,61 @@ pub struct CacheContext {
     pub replay_logs: bool,
 }
 
-/// The one policy for puts the shared store refused or never received: the
-/// first failure of an invocation is named in full, the rest are counted for
-/// one summary line per writer, and none of them fails the build. The store is
-/// unreachable or refusing, so a line per failure would only repeat the first.
-#[derive(Default)]
+/// The one policy for puts the shared store refused or never received: one
+/// record per invocation. The first failure (any writer) is named in full, the
+/// rest are counted per writer for one summary line each, and none of them
+/// fails the build. The store is unreachable or refusing, so a line per
+/// failure would only repeat the first.
+#[derive(Debug, Default)]
 pub struct FailedPuts {
-    told: std::sync::atomic::AtomicBool,
-    untold: std::sync::atomic::AtomicU64,
+    state: std::sync::Mutex<FailedPutsState>,
+}
+
+#[derive(Debug, Default)]
+struct FailedPutsState {
+    told: bool,
+    /// Untold failures per writer noun, in first-seen order.
+    untold: Vec<(&'static str, u64)>,
+    /// Everything `record_once` has seen.
+    seen: std::collections::HashSet<String>,
 }
 
 impl FailedPuts {
-    /// For a writer that runs after another in the same invocation (the run
-    /// after the register pass): when that one has told its first failure,
-    /// this one only counts.
-    pub fn after(earlier_told: bool) -> Self {
-        Self { told: earlier_told.into(), untold: 0.into() }
+    /// Records one failed upload of `what` by the writer `noun` (e.g. `unit(s)`);
+    /// only the invocation's first is told.
+    pub fn record(&self, noun: &'static str, what: &str, err: &dyn std::fmt::Display) {
+        let mut st = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        st.record(noun, what, err);
     }
 
-    /// Whether a failure has been told.
-    pub fn told(&self) -> bool {
-        self.told.load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    /// Records one failed upload of `what`; only the invocation's first is told.
-    pub fn record(&self, what: &str, err: &dyn std::fmt::Display) {
-        if self.told.swap(true, std::sync::atomic::Ordering::Relaxed) {
-            self.untold.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        } else {
-            tracing::warn!("cache upload for {what} failed: {err}; not published");
+    /// Like `record`, but a `what` already recorded is ignored entirely: for a
+    /// writer whose put is attempted again by a later pass of the same invocation.
+    pub fn record_once(&self, noun: &'static str, what: &str, err: &dyn std::fmt::Display) {
+        let mut st = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if st.seen.insert(what.to_string()) {
+            st.record(noun, what, err);
         }
     }
 
-    /// Tells how many of this writer's failures went untold, as `noun` (e.g. `unit(s)`).
-    pub fn summarize(&self, noun: &str) {
-        let more = self.untold.load(std::sync::atomic::Ordering::Relaxed);
-        if more > 0 {
+    /// Tells how many of each writer's failures went untold, then forgets them,
+    /// so a second call prints nothing.
+    pub fn summarize(&self) {
+        let mut st = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        for (noun, more) in std::mem::take(&mut st.untold) {
             tracing::warn!("cache upload failed for {more} more {noun}; not published");
+        }
+    }
+}
+
+impl FailedPutsState {
+    fn record(&mut self, noun: &'static str, what: &str, err: &dyn std::fmt::Display) {
+        if !self.told {
+            self.told = true;
+            tracing::warn!("cache upload for {what} failed: {err}; not published");
+        } else if let Some(e) = self.untold.iter_mut().find(|e| e.0 == noun) {
+            e.1 += 1;
+        } else {
+            self.untold.push((noun, 1));
         }
     }
 }

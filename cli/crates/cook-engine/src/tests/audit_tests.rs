@@ -238,11 +238,10 @@ fn audit_refuses_outside_the_isolated_view() {
         alias_dirs_by_prefix: BTreeMap::new(),
         terminal_outputs: BTreeMap::new(),
         materializations: vec![],
-        upload_failure_told: false,
     };
     let store = tempfile::tempdir().unwrap();
     let ctx = scratch_cache_ctx(dir.path(), store.path()).unwrap();
-    let e = audit(dir.path(), &ws, &BTreeMap::new(), &BTreeSet::new(), 1, ctx).unwrap_err();
+    let e = audit(dir.path(), &ws, &BTreeMap::new(), &BTreeSet::new(), 1, ctx, Default::default()).unwrap_err();
     assert_eq!(e, "audit must run inside the isolated project view");
 }
 
@@ -371,7 +370,6 @@ mod e2e {
             alias_dirs_by_prefix: BTreeMap::new(),
             terminal_outputs: BTreeMap::new(),
             materializations: vec![],
-            upload_failure_told: false,
         }
     }
 
@@ -381,7 +379,7 @@ mod e2e {
         let reachable = BTreeSet::from(["lint".to_string()]);
         let store = tempfile::tempdir().unwrap();
         let ctx = scratch_cache_ctx(root, store.path()).unwrap();
-        audit_in_place(root, &ws, &edges, &reachable, 1, ctx).expect("audit")
+        audit_in_place(root, &ws, &edges, &reachable, 1, ctx, Default::default()).expect("audit")
     }
 
     #[test]

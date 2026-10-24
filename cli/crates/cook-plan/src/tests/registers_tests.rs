@@ -66,6 +66,7 @@ fn imported_materializer_workspace_input_is_root_anchored() {
         &[],
         RegisterMode::Enumerate,
         None,
+        Default::default(),
     )
     .unwrap();
     let materialization = registered

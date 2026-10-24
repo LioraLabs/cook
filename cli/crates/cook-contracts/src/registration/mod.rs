@@ -494,10 +494,6 @@ pub struct RegisteredWorkspace {
     /// Materializers which performed cache work during registration. Kept out
     /// of `names`: a materializer has no target identity.
     pub materializations: Vec<Materialization>,
-    /// Whether registration already told a failed shared-store put (a
-    /// materialized value's), so the run counts its own instead of naming
-    /// another: an invocation names one failed put in all.
-    pub upload_failure_told: bool,
 }
 
 #[cfg(test)]

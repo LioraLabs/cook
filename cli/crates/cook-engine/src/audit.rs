@@ -522,6 +522,7 @@ pub fn audit(
     reachable: &BTreeSet<String>,
     num_jobs: usize,
     cache_ctx: Arc<cook_cache::CacheContext>,
+    failed_puts: Arc<cook_cache::cache_ctx::FailedPuts>,
 ) -> Result<AuditReport, String> {
     let isolated = crate::sandbox::isolated_root().and_then(|r| r.canonicalize().ok());
     if isolated.is_none() || isolated != project_root.canonicalize().ok() {
@@ -546,7 +547,7 @@ pub fn audit(
             }
         }
     }
-    audit_in_place(project_root, workspace, edges, reachable, num_jobs, cache_ctx)
+    audit_in_place(project_root, workspace, edges, reachable, num_jobs, cache_ctx, failed_puts)
 }
 
 /// Refuse a project whose `.cook` — the project root's, or that of any
@@ -614,9 +615,10 @@ pub(crate) fn audit_in_place(
     reachable: &BTreeSet<String>,
     num_jobs: usize,
     cache_ctx: Arc<cook_cache::CacheContext>,
+    failed_puts: Arc<cook_cache::cache_ctx::FailedPuts>,
 ) -> Result<AuditReport, String> {
     let denylist = cache_ctx.denylist.clone();
-    let run_result = crate::run::run_with_cache_ctx(cache_ctx, workspace, edges, reachable, num_jobs, &[], true, |_e| {})
+    let run_result = crate::run::run_with_cache_ctx(cache_ctx, workspace, edges, reachable, num_jobs, &[], true, failed_puts, |_e| {})
         .map_err(|e| format!("populate run failed: {e}"))?;
 
     let mut ignore: Vec<PathBuf> = ["/proc", "/dev", "/sys", "/tmp", "/var/tmp"].map(PathBuf::from).into();

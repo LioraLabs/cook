@@ -738,6 +738,19 @@ fn materializer_module(wd: &std::path::Path, names: &[&str]) {
     std::fs::write(wd.join("Cookfile"), "use fixture\n\nfixture.install()\n").unwrap();
 }
 
+/// Like `materializer_module`, but each value names a recipe (`<n>-target`) that is a test unit,
+/// so `cook test` has a scope that exists only because a materialized value named it.
+fn testing_materializer_module(wd: &std::path::Path, names: &[&str]) {
+    let decls: String = names
+        .iter()
+        .map(|n| format!("  local {n} = cook.materialize(\"{n}\", {{}}, function()\n    return {{ target = \"{n}-target\" }}\n  end)\n  cook.recipe({n}.target, {{}}, function()\n    cook.add_unit({{ step_kind = \"test\", name = \"t-\" .. {n}.target, command = \"true\" }})\n  end)\n"))
+        .collect();
+    let dir = wd.join(".cook/modules/share/lua/5.4");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("fixture.lua"), format!("local M = {{}}\nfunction M.install()\n{decls}end\nreturn M\n")).unwrap();
+    std::fs::write(wd.join("Cookfile"), "use fixture\n\nfixture.install()\n").unwrap();
+}
+
 #[test]
 fn a_dead_store_builds_materialized_values_locally_naming_the_first_failed_put_and_counting_the_rest() {
     let tmp = TempDir::new().unwrap();
@@ -786,6 +799,129 @@ fn a_wrong_token_builds_a_materialized_value_locally_with_one_warning() {
     assert!(!err.contains("materialized value(s)"), "nothing more to count:\n{err}");
     assert_eq!(lines_containing(&err, "cache upload for").len(), 1, "the unit's refused put is counted, not named:\n{err}");
     assert!(!err.contains(wrong), "the token never reaches stderr:\n{err}");
+}
+
+/// Which dead or refusing store a materializer invocation runs against.
+#[derive(Clone, Copy)]
+enum Store {
+    /// Nobody listens at the endpoint.
+    Dead,
+    /// A live server that answers 401 to the client's token.
+    WrongToken,
+    /// A server that was live when the checkout was made and is gone by the run.
+    Stopped,
+}
+
+/// Runs `cook args` in a fresh checkout of `names` materializers against `store`; returns stderr.
+/// `build` is true for the module whose `build` recipe is a unit, false for the one whose
+/// `<name>-target` recipes are test units.
+fn materializer_stderr(store: Store, names: &[&str], build: bool, args: &[&str]) -> String {
+    let tmp = TempDir::new().unwrap();
+    let (served, wd) = match store {
+        Store::Dead => (None, dead_store_checkout(&tmp, "")),
+        Store::WrongToken | Store::Stopped => {
+            let (served, addr, _log) = start(&tmp);
+            let wd = checkout(&tmp, "live", &addr, "", true);
+            let mut cfg = std::fs::read_to_string(wd.join(".cook/cloud.toml")).unwrap();
+            cfg.push_str("timeout_secs = 1\nmax_retries = 0\n");
+            std::fs::write(wd.join(".cook/cloud.toml"), cfg).unwrap();
+            (Some(served), wd)
+        }
+    };
+    if build {
+        materializer_module(&wd, names);
+    } else {
+        testing_materializer_module(&wd, names);
+    }
+    if matches!(store, Store::Stopped) {
+        drop(served);
+    }
+    let out = Command::new(env!("CARGO_BIN_EXE_cook"))
+        .args(args)
+        .current_dir(&wd)
+        .env("XDG_CACHE_HOME", tmp.path().join("xdg-run"))
+        .env(API_KEY_ENV, if matches!(store, Store::WrongToken) { "not-the-servers-token" } else { TOKEN })
+        .output()
+        .expect("cook invocation");
+    let err = stderr_of(&out);
+    assert!(out.status.success(), "cook {args:?} failed:\n{err}");
+    err
+}
+
+/// One invocation names one failed put and counts the rest per writer: exactly `total`
+/// `cook: warning:` lines, one `cache upload for` line, and exactly the `summaries` lines.
+fn assert_one_record(err: &str, total: usize, summaries: &[&str]) {
+    assert_eq!(lines_containing(err, "cook: warning:").len(), total, "total warnings:\n{err}");
+    assert_eq!(lines_containing(err, "cache upload for").len(), 1, "one failed put named:\n{err}");
+    let counted = lines_containing(err, "cache upload failed for");
+    assert_eq!(counted.len(), summaries.len(), "one summary per writer with untold failures:\n{err}");
+    for s in summaries {
+        let line = format!("cook: warning: cache upload failed for {s}; not published");
+        assert_eq!(counted.iter().filter(|l| **l == line).count(), 1, "{line}:\n{err}");
+    }
+}
+
+#[test]
+fn every_command_that_registers_names_one_failed_put_and_counts_the_rest_once() {
+    for store in [Store::Dead, Store::WrongToken] {
+        for names in [&["graph"][..], &["inventory", "graph"][..]] {
+            // Both materializers' puts fail (the second is counted), never one per pass.
+            let more: &[&str] = if names.len() == 2 { &["1 more materialized value(s)"] } else { &[] };
+            let with = |extra: &[&'static str]| [more, extra].concat();
+            let health = 1; // once per run()
+            let (named, counted) = (1, more.len());
+
+            // build: health + named put + counted values + the unit's put counted
+            let err = materializer_stderr(store, names, true, &["build"]);
+            assert_one_record(&err, health + named + counted + 1, &with(&["1 more unit(s)"]));
+
+            // test <scope> lists the scope (own coordinator), then registers and runs: same record.
+            // Test units publish nothing, so no unit summary.
+            let scope = format!("{}-target", names[0]);
+            let err = materializer_stderr(store, names, false, &["test", &scope]);
+            assert_one_record(&err, health + named + counted, more);
+
+            // bare test: no listing pass; health + named + counted.
+            let err = materializer_stderr(store, names, false, &["test"]);
+            assert_one_record(&err, health + named + counted, more);
+
+            // why registers and queries without running: no health line.
+            let err = materializer_stderr(store, names, false, &["why", &scope]);
+            assert_one_record(&err, named + counted, more);
+        }
+    }
+}
+
+#[test]
+fn a_store_that_went_away_after_the_checkout_is_named_once_by_test_scope() {
+    let err = materializer_stderr(Store::Stopped, &["inventory", "graph"], false, &["test", "inventory-target"]);
+    // health + named put + "1 more materialized value(s)"
+    assert_one_record(&err, 3, &["1 more materialized value(s)"]);
+}
+
+#[test]
+fn audit_against_a_dead_store_never_touches_it() {
+    let require = std::env::var("COOK_AUDIT_E2E").is_ok_and(|v| v == "require");
+    if std::process::Command::new("strace").arg("-V").output().is_err() {
+        assert!(!require, "COOK_AUDIT_E2E=require but strace is not on PATH");
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let wd = dead_store_checkout(&tmp, "");
+    materializer_module(&wd, &["inventory", "graph"]);
+    let out = Command::new(env!("CARGO_BIN_EXE_cook"))
+        .args(["audit", "build"])
+        .current_dir(&wd)
+        .env("XDG_CACHE_HOME", tmp.path().join("xdg-run"))
+        .env(API_KEY_ENV, TOKEN)
+        .output()
+        .unwrap();
+    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), stderr_of(&out));
+    if all.contains("unsupported here") {
+        assert!(!require, "COOK_AUDIT_E2E=require but audit is unsupported here: {all}");
+        return;
+    }
+    assert!(!all.contains("cache upload"), "the audit's isolated child publishes nowhere:\n{all}");
 }
 
 #[test]

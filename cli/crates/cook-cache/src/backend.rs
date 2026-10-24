@@ -175,10 +175,12 @@ impl LocalBackend {
         self.root.join(&hex[..2]).join(&hex[2..])
     }
 
-    /// The sidecar half of the presence rule, shared by `open_raw` and
-    /// `batch_query`: the meta a get would serve by, or `None` when the
-    /// sidecar is missing, unparseable, or the pre-CS-0054 zero sentinel.
-    fn serving_meta(&self, path: &std::path::Path) -> io::Result<Option<ArtifactMeta>> {
+    /// The sidecar half of the presence rule, shared by `open_raw` (get),
+    /// `batch_query` and `commit_locked` (put): the meta a get would serve by,
+    /// or `None` when the sidecar is missing, unparseable, or the pre-CS-0054
+    /// zero sentinel. `damaged` ends the warning for a damaged sidecar: what
+    /// this caller does about it.
+    fn serving_meta(&self, path: &std::path::Path, damaged: &str) -> io::Result<Option<ArtifactMeta>> {
         // Read the sidecar first — without a recorded `content_hash` we
         // have no integrity proof and MUST NOT install the bytes. A
         // missing or unparseable sidecar surfaces as `Ok(None)`, same
@@ -191,7 +193,7 @@ impl LocalBackend {
                 // write recovery — both surface as miss.
                 if path.exists() {
                     tracing::warn!(
-                        "cache integrity: missing sidecar for {}; treating as miss",
+                        "cache integrity: missing sidecar for {}; {damaged}",
                         path.display()
                     );
                 }
@@ -203,7 +205,7 @@ impl LocalBackend {
             Ok(m) => m,
             Err(e) => {
                 tracing::warn!(
-                    "cache integrity: malformed sidecar at {} ({e}); treating as miss",
+                    "cache integrity: malformed sidecar at {} ({e}); {damaged}",
                     meta_path.display()
                 );
                 return Ok(None);
@@ -214,7 +216,7 @@ impl LocalBackend {
         // proof. Fail closed, treat as miss, force rebuild.
         if meta.content_hash == ArtifactMeta::zero_content_hash() {
             tracing::warn!(
-                    "cache integrity: legacy zero-sentinel content_hash at {}; treating as miss",
+                    "cache integrity: legacy zero-sentinel content_hash at {}; {damaged}",
                 meta_path.display()
             );
             return Ok(None);
@@ -229,7 +231,7 @@ impl LocalBackend {
     pub(crate) fn open_raw(&self, key: &CloudKey) -> BackendResult<Option<(File, ArtifactMeta)>> {
         let path = self.path_for(key);
         let Some(meta) = self
-            .serving_meta(&path)
+            .serving_meta(&path, "treating as miss")
             .map_err(|e| BackendError::Other(format!("read meta {}: {e}", path.with_extension("meta.json").display())))?
         else {
             return Ok(None);
@@ -534,7 +536,7 @@ impl LocalBackend {
         // CS-0055: idempotency / conflict detection against any prior artifact.
         // `serving_meta` is the one sidecar rule: None = no recorded hash, write through.
         if path.exists() {
-            let prior = self.serving_meta(&path).map_err(|e| {
+            let prior = self.serving_meta(&path, "the put replaces it").map_err(|e| {
                 store_err(format!("read meta {}", meta_path.display()), e)
             })?;
             if let Some(existing) = prior {
@@ -594,7 +596,7 @@ impl CacheBackend for LocalBackend {
             // Present only if a get would serve it: open_raw's sidecar rule plus the blob, no
             // hashing. An unreadable sidecar counts as absent, so backfill re-uploads.
             let path = self.path_for(k);
-            if matches!(self.serving_meta(&path), Ok(Some(_))) && path.exists() {
+            if matches!(self.serving_meta(&path, "treating as miss"), Ok(Some(_))) && path.exists() {
                 hits.insert(*k);
             }
         }

@@ -10,6 +10,7 @@ fn verify_cache_entry_exists() {
         &std::collections::BTreeMap<String, Vec<String>>,
         &std::collections::BTreeSet<String>,
         usize,
+        std::sync::Arc<cook_cache::cache_ctx::FailedPuts>,
     ) -> Result<VerifyReport, String> = verify_cache;
     let _ = _f;
 }

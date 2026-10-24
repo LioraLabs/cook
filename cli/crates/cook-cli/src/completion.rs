@@ -189,7 +189,7 @@ fn workspace_names() -> Vec<(String, RecipeKind)> {
         return Vec::new();
     };
     let Ok(names) =
-        pipeline::list_workspace_names_cached(&workspace, None, &globals.set, Some(cache_ctx))
+        pipeline::list_workspace_names_cached(&workspace, None, &globals.set, Some(cache_ctx), globals.failed_puts.clone())
     else {
         return Vec::new();
     };

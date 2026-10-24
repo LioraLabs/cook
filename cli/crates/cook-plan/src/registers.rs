@@ -43,11 +43,10 @@ use cook_register::RegisteredWorkspace;
 
 struct MaterializeCoordinator {
     runner: cook_register::MaterializeRunner,
-    failed_puts: Arc<cook_cache::cache_ctx::FailedPuts>,
     materializations: Arc<std::sync::Mutex<Vec<cook_contracts::registration::Materialization>>>,
 }
 
-fn materialize_coordinator() -> MaterializeCoordinator {
+fn materialize_coordinator(failed_puts: Arc<cook_cache::cache_ctx::FailedPuts>) -> MaterializeCoordinator {
     use cook_execute::{WorkResult, WorkerPool};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Mutex, OnceLock};
@@ -67,13 +66,6 @@ fn materialize_coordinator() -> MaterializeCoordinator {
                 ),
             >,
         >,
-        failed_puts: Arc<cook_cache::cache_ctx::FailedPuts>,
-    }
-    // The coordinator lives as long as the pass that registers through it.
-    impl Drop for Coordinator {
-        fn drop(&mut self) {
-            self.failed_puts.summarize("materialized value(s)");
-        }
     }
 
     let workers = std::thread::available_parallelism().map_or(1, usize::from);
@@ -84,9 +76,7 @@ fn materialize_coordinator() -> MaterializeCoordinator {
         buffered: Mutex::new(HashMap::new()),
         next_id: AtomicUsize::new(0),
         declarations: Mutex::new(HashMap::new()),
-        failed_puts: Default::default(),
     });
-    let failed_puts = coordinator.failed_puts.clone();
     let materializations = Arc::new(std::sync::Mutex::new(Vec::new()));
     let reported = materializations.clone();
 
@@ -221,11 +211,14 @@ fn materialize_coordinator() -> MaterializeCoordinator {
                     mode: 0o644,
                     target: None,
                 };
+                // Not through the executor's upload_completion: that writer is unit-shaped and
+                // lives in cook-engine, which cook-plan does not depend on; both share put_bytes.
                 if let Err(e) =
                     cook_cache::backend::put_bytes(ctx.backend.as_ref(), &artifact, &bytes, &mut meta)
                 {
                     let what = format!("materialized value {}", request.qualified_key);
-                    coordinator.failed_puts.record(&what, &e);
+                    // Both the list pass and the register pass attempt this put.
+                    failed_puts.record_once("materialized value(s)", &what, &e);
                 }
             }
             let outcome = cook_contracts::registration::MaterializationOutcome::Ran;
@@ -236,13 +229,12 @@ fn materialize_coordinator() -> MaterializeCoordinator {
     });
     MaterializeCoordinator {
         runner,
-        failed_puts,
         materializations,
     }
 }
 
-fn materialize_runner() -> cook_register::MaterializeRunner {
-    materialize_coordinator().runner
+fn materialize_runner(failed_puts: Arc<cook_cache::cache_ctx::FailedPuts>) -> cook_register::MaterializeRunner {
+    materialize_coordinator(failed_puts).runner
 }
 
 /// How the register pass binds a CLI dispatch target. The register layer has
@@ -393,7 +385,6 @@ fn member_base_builder(
     Ok(
         RegisterSessionBuilder::new(member.dir.clone(), HashMap::new())
             .with_child_invocation(workspace.child_invocation.clone())
-            .with_materialize_runner(materialize_runner())
             .with_cli_overrides(cli_overrides)
             .with_selected_config(config.map(|s| s.to_string()))
             .with_qualified_prefix(prefix.to_string()),
@@ -525,7 +516,8 @@ pub fn register_workspace(
         env_overrides,
         mode,
         cache_ctx,
-        materialize_runner(),
+        // Throwaway: the invocation's callers register through the `_cached` entry points.
+        materialize_runner(Default::default()),
     )
 }
 
@@ -551,7 +543,6 @@ fn register_workspace_with_materializers(
         alias_dirs_by_prefix: BTreeMap::new(),
         terminal_outputs: BTreeMap::new(),
         materializations: Vec::new(),
-        upload_failure_told: false,
     };
 
     // Which chore bodies this pass may invoke (Standard §7.6, CS-0218).
@@ -810,7 +801,8 @@ pub fn list_workspace_names(
     config: Option<&str>,
     env_overrides: &[String],
 ) -> Result<Vec<cook_register::RegisteredRecipePub>, PipelineError> {
-    list_workspace_names_cached(workspace, config, env_overrides, None)
+    // No cache context, so no put is attempted and the record stays empty.
+    list_workspace_names_cached(workspace, config, env_overrides, None, Default::default())
 }
 
 pub fn list_workspace_names_cached(
@@ -818,8 +810,9 @@ pub fn list_workspace_names_cached(
     config: Option<&str>,
     env_overrides: &[String],
     cache_ctx: Option<Arc<cook_cache::CacheContext>>,
+    failed_puts: Arc<cook_cache::cache_ctx::FailedPuts>,
 ) -> Result<Vec<cook_register::RegisteredRecipePub>, PipelineError> {
-    let materializers = materialize_runner();
+    let materializers = materialize_runner(failed_puts);
     pre_materialize_workspace(
         workspace,
         config,
@@ -872,7 +865,8 @@ pub fn codegen_with_module_recipes(
     config: Option<&str>,
     env_overrides: &[String],
 ) -> Result<(), PipelineError> {
-    codegen_with_module_recipes_cached(workspace, config, env_overrides, None)
+    // No cache context, so no put is attempted and the record stays empty.
+    codegen_with_module_recipes_cached(workspace, config, env_overrides, None, Default::default())
 }
 
 pub fn codegen_with_module_recipes_cached(
@@ -880,8 +874,9 @@ pub fn codegen_with_module_recipes_cached(
     config: Option<&str>,
     env_overrides: &[String],
     cache_ctx: Option<Arc<cook_cache::CacheContext>>,
+    failed_puts: Arc<cook_cache::cache_ctx::FailedPuts>,
 ) -> Result<(), PipelineError> {
-    let materializers = materialize_runner();
+    let materializers = materialize_runner(failed_puts);
     codegen_with_module_recipes_cached_with_materializers(
         workspace,
         config,
@@ -931,8 +926,9 @@ pub fn prepare_and_register_workspace_cached(
     env_overrides: &[String],
     mode: RegisterMode<'_>,
     cache_ctx: Option<Arc<cook_cache::CacheContext>>,
+    failed_puts: Arc<cook_cache::cache_ctx::FailedPuts>,
 ) -> Result<RegisteredWorkspace, PipelineError> {
-    let coordinator = materialize_coordinator();
+    let coordinator = materialize_coordinator(failed_puts);
     let materializers = coordinator.runner.clone();
     codegen_with_module_recipes_cached_with_materializers(
         workspace,
@@ -950,7 +946,6 @@ pub fn prepare_and_register_workspace_cached(
         materializers,
     )?;
     registered.materializations = coordinator.materializations.lock().unwrap().clone();
-    registered.upload_failure_told = coordinator.failed_puts.told();
     Ok(registered)
 }
 
