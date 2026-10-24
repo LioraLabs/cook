@@ -237,3 +237,27 @@ fn pcall_add_unit_twice_in_step_group_warns_for_each() {
     );
     assert_two_warnings(&tmp, "c*", "d*");
 }
+
+/// An absolute declaration under the working dir (cook_pnpm's `<wd>/./` form) is
+/// read as the unit-relative path it is keyed and restored under (COOK-620).
+#[test]
+fn absolute_declaration_under_the_working_dir_is_read_unit_relative() {
+    let tmp = TempDir::new().unwrap();
+    let wd = tmp.path().canonicalize().unwrap();
+    let wd = wd.display();
+    for (pattern, warns) in [
+        (format!("{wd}/./*.gen"), true),
+        (format!("{wd}/././*"), true),
+        (format!("{wd}/./dist/**"), false),
+    ] {
+        write(
+            tmp.path(),
+            "Cookfile",
+            &format!("recipe build\n    cook.add_unit({{ inputs = {{}}, outputs = {{\"{pattern}\"}}, command = \"mkdir -p dist && touch a.gen dist/a\" }})\n"),
+        );
+        let output = cook(tmp.path(), &["build"]);
+        assert_ok(&output);
+        let n = stderr(&output).matches(&line(&pattern, "build")).count();
+        assert_eq!(n, usize::from(warns), "{pattern}: {}", stderr(&output));
+    }
+}

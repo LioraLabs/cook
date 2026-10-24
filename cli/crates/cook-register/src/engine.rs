@@ -1481,7 +1481,7 @@ impl BodyDriver {
                     }
                     _ => pattern.clone(),
                 };
-                if cook_contracts::pathlaw::is_root_wildcard_output(pattern)
+                if cook_contracts::pathlaw::is_root_wildcard_output(pattern, &wd)
                     && builder
                         .root_wildcard_warned
                         .borrow_mut()

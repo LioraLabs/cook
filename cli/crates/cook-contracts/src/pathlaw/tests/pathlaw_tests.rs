@@ -154,11 +154,12 @@ fn audit_refuses_a_relative_root_climbing_back_to_its_own_directory() {
 
 #[test]
 fn root_wildcard_outputs() {
-    for e in ["**", "*", "*.env", ".*", "?x", "[ab]c", "./*", "**/x"] {
-        assert!(is_root_wildcard_output(e), "{e}");
+    let wd = "/w/proj";
+    for e in ["**", "*", "*.env", ".*", "?x", "[ab]c", "./*", "**/x", "*.out", "/w/proj/./*.gen", "/w/proj/././*", "/w/proj/*"] {
+        assert!(is_root_wildcard_output(e, wd), "{e}");
     }
-    for e in ["dist/**", "out/*.o", "./dist/*", "a.txt", "dist/", "../x/*", "", "/abs/*"] {
-        assert!(!is_root_wildcard_output(e), "{e}");
+    for e in ["dist/**", "out/*.o", "./dist/*", "a.txt", "dist/", "../x/*", "", "/abs/*", "/w/proj/./dist/**", "/w/projx/*"] {
+        assert!(!is_root_wildcard_output(e, wd), "{e}");
     }
 }
 

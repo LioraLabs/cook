@@ -24,9 +24,10 @@ pub fn has_glob_meta(s: &str) -> bool {
 
 /// True when the first component of an output declaration is itself a pattern
 /// (`**`, `*`, `*.env`, `.*`), so it can name files directly in the unit's
-/// working directory (CS-0271). A leading `./` is ignored.
-pub fn is_root_wildcard_output(s: &str) -> bool {
-    strip_dot_slash(s).split('/').next().is_some_and(has_glob_meta)
+/// working directory (CS-0271). Read as [`unit_relative`] to `wd`, the form it
+/// is keyed and restored under (`<wd>/./*.gen` is `*.gen`); a leading `./` is ignored.
+pub fn is_root_wildcard_output(s: &str, wd: &str) -> bool {
+    strip_dot_slash(&unit_relative(s, wd)).split('/').next().is_some_and(has_glob_meta)
 }
 
 /// A directory output (CS-0119): a trailing slash declares that Cook owns the
