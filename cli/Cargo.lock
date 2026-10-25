@@ -374,7 +374,7 @@ dependencies = [
 
 [[package]]
 name = "cook-cache"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "chunked_transfer",
  "cook-contracts",
@@ -399,7 +399,7 @@ dependencies = [
 
 [[package]]
 name = "cook-cli"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "cargo_metadata",
  "clap",
@@ -431,7 +431,7 @@ dependencies = [
 
 [[package]]
 name = "cook-contracts"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "glob",
  "globset",
@@ -445,7 +445,7 @@ dependencies = [
 
 [[package]]
 name = "cook-cookfile"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "cook-contracts",
  "thiserror 2.0.18",
@@ -455,11 +455,11 @@ dependencies = [
 
 [[package]]
 name = "cook-dag"
-version = "0.18.0"
+version = "0.19.0"
 
 [[package]]
 name = "cook-engine"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "cook-cache",
  "cook-contracts",
@@ -482,7 +482,7 @@ dependencies = [
 
 [[package]]
 name = "cook-envtrace"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "cc",
  "tempfile",
@@ -490,7 +490,7 @@ dependencies = [
 
 [[package]]
 name = "cook-execute"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "cook-cache",
  "cook-contracts",
@@ -505,7 +505,7 @@ dependencies = [
 
 [[package]]
 name = "cook-graph"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "cook-cache",
  "cook-contracts",
@@ -518,7 +518,7 @@ dependencies = [
 
 [[package]]
 name = "cook-lang"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "cook-contracts",
  "thiserror 2.0.18",
@@ -526,7 +526,7 @@ dependencies = [
 
 [[package]]
 name = "cook-logs"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "ansi-to-tui",
  "base64",
@@ -542,7 +542,7 @@ dependencies = [
 
 [[package]]
 name = "cook-lua-stdlib"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "cook-cache",
  "cook-contracts",
@@ -556,7 +556,7 @@ dependencies = [
 
 [[package]]
 name = "cook-luagen"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "cook-contracts",
  "cook-lang",
@@ -565,7 +565,7 @@ dependencies = [
 
 [[package]]
 name = "cook-modules"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -581,7 +581,7 @@ dependencies = [
 
 [[package]]
 name = "cook-plan"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "cook-cache",
  "cook-contracts",
@@ -596,7 +596,7 @@ dependencies = [
 
 [[package]]
 name = "cook-probe"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "cook-cache",
  "cook-contracts",
@@ -606,7 +606,7 @@ dependencies = [
 
 [[package]]
 name = "cook-progress"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "arc-swap",
  "cook-contracts",
@@ -622,7 +622,7 @@ dependencies = [
 
 [[package]]
 name = "cook-register"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "cook-cache",
  "cook-contracts",
@@ -640,7 +640,7 @@ dependencies = [
 
 [[package]]
 name = "cook-shell"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "cook-contracts",
  "libc",
