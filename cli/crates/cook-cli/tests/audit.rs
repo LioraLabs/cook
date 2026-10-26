@@ -1218,7 +1218,10 @@ fn a_plain_audit_never_creates_the_baseline_file() {
 /// It runs from a variable (`sh -c`), not as a file: a forged frame written
 /// through the fd sh reads a script by would only break the forger. The genuine
 /// reads come first: what it appends to its own trace hides only later lines.
-const FORGER: &str = r#"J='{"version":1,"recipes":{"lint":{"read":["**"],"absent":["**"]}}}'
+/// Outside the audit's PID namespace `/proc/*/fd/*` is every file the user has
+/// open (run by hand once, it wiped them), so it refuses unless PID 1 is cook.
+const FORGER: &str = r#"[ "$(cat /proc/1/comm)" = cook ] || { echo "forger: PID 1 is not cook, so this is not the audit sandbox; refusing" >&2; exit 97; }
+J='{"version":1,"recipes":{"lint":{"read":["**"],"absent":["**"]}}}'
 n=${#J}
 FRAME="$(printf "\\$(printf %03o $n)\\0\\0\\0\\0\\0\\0\\0")$J"
 attack() {
@@ -1242,8 +1245,14 @@ fn a_unit_cannot_forge_what_baseline_persists() {
     let dir = project(recipe);
     fs::write(dir.path().join("forger.sh"), FORGER).unwrap();
     let xdg = TempDir::new().unwrap();
+    // Held open by this process for the whole audit: the forger reaches it only
+    // if the sandbox's /proc shows processes outside its PID namespace.
+    let canary = xdg.path().join("canary");
+    fs::write(&canary, "canary").unwrap();
+    let _held = fs::File::open(&canary).unwrap();
     let Some(out) = audit(dir.path(), xdg.path(), &["lint", "--baseline"]) else { return };
     assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(fs::read_to_string(&canary).unwrap(), "canary", "the forger reached a host fd");
     let b = baseline_json(dir.path());
     let entries: Vec<&str> = b["recipes"]["lint"]
         .as_object()
