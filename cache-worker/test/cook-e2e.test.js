@@ -3,6 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
+import { createServer, request as httpRequest } from "node:http";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -35,14 +36,14 @@ test("cook shares builds through the Worker", { skip: runnable || process.env.CO
   });
 
   // A checkout holds only source plus cloud.toml; HOME and the XDG dirs are private to it so no local store survives.
-  function checkout(name, src) {
+  function checkout(name, src, endpoint = worker.url) {
     const dir = join(root, name, "proj");
     mkdirSync(join(dir, ".cook"), { recursive: true });
     writeFileSync(join(dir, "Cookfile"), COOKFILE);
     writeFileSync(join(dir, "src.txt"), src);
     writeFileSync(
       join(dir, ".cook", "cloud.toml"),
-      `[cloud]\nenabled = true\nproject = "e2e"\nendpoint = "${worker.url}"\nmax_artifact_mib = 32\ntimeout_secs = 10\nmax_retries = 1\n`,
+      `[cloud]\nenabled = true\nproject = "e2e"\nendpoint = "${endpoint}"\nmax_artifact_mib = 32\ntimeout_secs = 10\nmax_retries = 1\n`,
     );
     return dir;
   }
@@ -85,14 +86,32 @@ test("cook shares builds through the Worker", { skip: runnable || process.env.CO
   assert.match(b.out, /1\/2 cached/, "cook reports the unit as cached" + shown(b));
   assert.equal(built(B), "[widget] hello\n", "B's output was restored" + shown(b));
 
-  // Several clean checkouts of a new input miss together and each publishes the same key: no conflict.
-  const peers = ["c1", "c2", "c3"].map((n) => checkout(n, "second\n"));
-  const results = await Promise.all(peers.map((d) => cook(d, worker.trusted)));
-  results.forEach((r, i) => {
-    assert.equal(ran(peers[i]), 1, `${peers[i]} missed and ran the recipe itself` + shown(r));
-    assert.equal(r.status, 0, `${peers[i]} builds` + shown(r));
-    assert.doesNotMatch(r.out, /409|conflict/i, "publishing the same input is not a conflict" + shown(r));
+  // The same input published twice is not a conflict. C2 reaches the Worker through a proxy that hides GET reads
+  // (answers 404, except health) but forwards everything else, so it misses and republishes the same keys whatever the timing.
+  let forwardedPuts = 0;
+  const blind = createServer((req, res) => {
+    if (req.method === "GET" && req.url !== "/v1/health") return res.writeHead(404).end();
+    const fail = () => (res.headersSent ? res.destroy() : res.writeHead(502).end());
+    const up = httpRequest(worker.url + req.url, { method: req.method, headers: req.headers }, (r) => {
+      if (req.method === "PUT" && r.statusCode >= 200 && r.statusCode < 300) forwardedPuts++;
+      res.writeHead(r.statusCode, r.headers);
+      r.on("error", fail);
+      r.pipe(res);
+    });
+    up.on("error", fail);
+    req.pipe(up);
   });
+  await new Promise((r) => blind.listen(0, "127.0.0.1", r));
+  t.after(() => blind.close());
+  const peers = [checkout("c1", "second\n"), checkout("c2", "second\n", `http://127.0.0.1:${blind.address().port}`)];
+  for (const dir of peers) {
+    const r = await cook(dir, worker.trusted);
+    assert.equal(r.status, 0, `${dir} builds` + shown(r));
+    assert.equal(ran(dir), 1, `${dir} missed and ran the recipe itself` + shown(r));
+    assert.doesNotMatch(r.out, /409|conflict/i, "publishing the same input again is not a conflict" + shown(r));
+    assert.doesNotMatch(r.out, /unavailable/i, "the cache store stays reachable" + shown(r));
+  }
+  assert.ok(forwardedPuts > 0, "c2's uploads reached the Worker, so the no-conflict check is not vacuous");
   // A later clean checkout of that input then hits what they published.
   const C = checkout("c4", "second\n");
   const c = await cook(C, worker.trusted);
