@@ -901,6 +901,10 @@ fn a_store_that_went_away_after_the_checkout_is_named_once_by_test_scope() {
 
 #[test]
 fn audit_against_a_dead_store_never_touches_it() {
+    if std::env::var("COOK_AUDIT_E2E").is_ok_and(|v| v == "off") {
+        eprintln!("skipping: COOK_AUDIT_E2E=off");
+        return;
+    }
     let require = std::env::var("COOK_AUDIT_E2E").is_ok_and(|v| v == "require");
     if std::process::Command::new("strace").arg("-V").output().is_err() {
         assert!(!require, "COOK_AUDIT_E2E=require but strace is not on PATH");

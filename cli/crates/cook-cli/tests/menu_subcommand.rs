@@ -332,6 +332,10 @@ fn audit_names_shadowed_recipe_even_when_it_refuses() {
 /// when it can trace), the notice is printed once, not once per process.
 #[test]
 fn audit_names_shadowed_recipe_once() {
+    if std::env::var("COOK_AUDIT_E2E").is_ok_and(|v| v == "off") {
+        eprintln!("skipping: COOK_AUDIT_E2E=off");
+        return;
+    }
     let tmp = TempDir::new().expect("tempdir");
     let cache = TempDir::new().expect("cache dir");
     write_cookfile(tmp.path(), AUDIT_RECIPE);

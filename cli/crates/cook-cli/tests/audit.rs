@@ -36,6 +36,11 @@ fn audit_with(dir: &Path, xdg: &Path, args: &[&str], env: &[(&str, &Path)]) -> O
 /// (then `env`), as under `env -i HOME=.. PATH=/usr/bin:/bin`.
 fn audit_in(dir: &Path, xdg: &Path, args: &[&str], env: &[(&str, &Path)], minimal: bool) -> Option<Output> {
     // CI sets COOK_AUDIT_E2E=require: a host that cannot run the audit fails.
+    // COOK_AUDIT_E2E=off: never build the audit sandbox here (CI runs hostile fixtures nowhere).
+    if std::env::var("COOK_AUDIT_E2E").is_ok_and(|v| v == "off") {
+        eprintln!("skipping: COOK_AUDIT_E2E=off");
+        return None;
+    }
     let require = std::env::var("COOK_AUDIT_E2E").is_ok_and(|v| v == "require");
     if which_strace().is_none() {
         assert!(!require, "COOK_AUDIT_E2E=require but strace is not on PATH");
@@ -1031,7 +1036,7 @@ fn a_hand_written_pattern_survives_regeneration_and_accepts_its_matches() {
         r#"{"version": 1, "recipes": {"lint": {"absent": ["conf/miss*"], "read": ["conf/*"]}}}"#,
     )
     .unwrap();
-    let out = audit(dir.path(), xdg.path(), &["lint", "--json"]).unwrap();
+    let Some(out) = audit(dir.path(), xdg.path(), &["lint", "--json"]) else { return };
     let doc = json(&out); // system reads remain: the anchored patterns do not swallow them
     assert!(doc["accepted"].as_u64().unwrap() >= 2, "{doc}");
     assert!(!doc["findings"].to_string().contains("conf/"), "{doc}");

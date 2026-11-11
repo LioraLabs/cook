@@ -88,6 +88,10 @@ fn audit_without(removed: &[&Hole]) -> Option<Vec<Doc>> {
     fs::write(home.path().join(".tc/stable/v"), "1\n").unwrap();
     let xdg = TempDir::new().unwrap();
 
+    if std::env::var("COOK_AUDIT_E2E").is_ok_and(|v| v == "off") {
+        eprintln!("skipping: COOK_AUDIT_E2E=off");
+        return None;
+    }
     if !on_path("strace") {
         assert!(!require(), "COOK_AUDIT_E2E=require but strace is not on PATH");
         eprintln!("skipping: strace not on PATH");
