@@ -1235,9 +1235,7 @@ attack() {
         [ -d "$d" ] || continue
         printf %s "$J" > "$d/handback"; mkdir -p "$d/handback.tmp"
     done 2>/dev/null
-    # In a subshell: dash (Ubuntu's sh) cannot parse `>&10` and exits the shell; the
-    # /proc sweep below still reaches this shell's own fds 10.. by path.
-    fd=3; while [ $fd -le 30 ]; do (eval "printf %s \"\$FRAME\" >&$fd") 2>/dev/null; fd=$((fd+1)); done
+    fd=3; while [ $fd -le 30 ]; do eval "printf %s \"\$FRAME\" >&$fd" 2>/dev/null; fd=$((fd+1)); done
     # Appended, not truncated: a truncated trace file only hides the forger from the audit.
     for f in /proc/[0-9]*/fd/*; do printf %s "$FRAME" >> "$f"; done 2>/dev/null
 }
@@ -1261,17 +1259,17 @@ fn a_unit_cannot_forge_what_baseline_persists() {
     assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(fs::read_to_string(&canary).unwrap(), "canary", "the forger reached a host fd");
     let b = baseline_json(dir.path());
-    let entries: Vec<(&str, &str)> = b["recipes"]["lint"]
+    let entries: Vec<&str> = b["recipes"]["lint"]
         .as_object()
         .unwrap()
-        .iter()
-        .flat_map(|(k, v)| v.as_array().unwrap().iter().map(move |e| (k.as_str(), e.as_str().unwrap())))
+        .values()
+        .flat_map(|v| v.as_array().unwrap())
+        .map(|e| e.as_str().unwrap())
         .collect();
-    assert!(entries.contains(&("read", ".lintrc")), "{b}");
-    assert!(entries.iter().all(|(_, e)| !e.contains('*')), "{b}");
+    assert!(entries.contains(&".lintrc"), "{b}");
+    assert!(entries.iter().all(|e| !e.contains('*')), "{b}");
     // System reads are genuine too; nothing from the project but what was read.
-    // `env` holds variable names, not paths (uutils cat reads CLICOLOR_FORCE and friends).
-    let project: Vec<_> = entries.iter().filter(|(k, e)| *k != "env" && !e.starts_with(['/', '~'])).map(|(_, e)| e).collect();
+    let project: Vec<_> = entries.iter().filter(|e| !e.starts_with(['/', '~'])).collect();
     assert!(project.iter().all(|e| [".lintrc", "src/a.ts", "forger.sh"].contains(e)), "{b}");
 
     // The next audit accepts only what was genuinely read.
