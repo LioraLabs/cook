@@ -1,0 +1,13 @@
+// cook's v1 remote-cache protocol over R2. TRUSTED_TOKEN and UNTRUSTED_TOKEN are secrets (`wrangler secret put`); with
+// neither set, every request is refused with 401.
+{
+	"name": "cook-cache",
+	"main": "src/index.js",
+	"compatibility_date": "2026-10-01",
+	"r2_buckets": [
+		{
+			"binding": "CACHE",
+			"bucket_name": "cook-cache"
+		}
+	]
+}

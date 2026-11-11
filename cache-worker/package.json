@@ -1,0 +1,12 @@
+{
+  "name": "cook-cache-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "test": "node --test test/worker.test.js test/cook-e2e.test.js"
+  },
+  "devDependencies": {
+    "wrangler": "4.150.0"
+  }
+}
