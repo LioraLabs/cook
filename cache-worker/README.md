@@ -20,7 +20,21 @@ The bearer token picks the zone; objects live under `trusted/` or `untrusted/` i
 - `TRUSTED_TOKEN`: the owner's machines.
 - `UNTRUSTED_TOKEN`: builds of untrusted input, for example the ROM builder container.
 
-Both are Worker secrets. Deploying needs the R2 bucket bound as `CACHE` (see `wrangler.jsonc`) and the two secrets.
+Both are Worker secrets and must differ; equal tokens make every request a 500.
+
+## Deploy
+
+From scratch:
+
+```sh
+npx wrangler r2 bucket create cook-cache
+npx wrangler r2 bucket lifecycle add cook-cache expire-30d --expire-days 30
+npx wrangler deploy
+openssl rand -hex 32 | npx wrangler secret put TRUSTED_TOKEN
+openssl rand -hex 32 | npx wrangler secret put UNTRUSTED_TOKEN
+```
+
+The lifecycle rule is the only eviction: an expired entry is a miss and gets republished. Until both secrets are set every request is a 401.
 
 ## Limits
 
@@ -31,7 +45,7 @@ Both are Worker secrets. Deploying needs the R2 bucket bound as `CACHE` (see `wr
 
 ## Local development
 
-`pnpm install`, then `pnpm test`. `test/start-worker.js` exports `startWorker()`, which runs the Worker against a temporary local R2 and returns `{ url, trusted, untrusted, stop }`. `test/cook-e2e.test.js` drives the real `cook` binary (`COOK_BIN`, default `cook` on PATH) and is skipped with a message if it cannot run.
+`pnpm install`, then `pnpm test`. `test/start-worker.js` exports `startWorker()`, which runs the Worker against a temporary local R2 and returns `{ url, trusted, untrusted, stop }`. `test/cook-e2e.test.js` drives the real `cook` binary (`COOK_BIN`, default `cook` on PATH) and is skipped with a message if it cannot run, unless `COOK_BIN` is set, in which case it fails. The root Cookfile's `cache-worker` recipe runs the suite against the cook built in this repo.
 
 ## Client config
 

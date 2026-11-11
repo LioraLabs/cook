@@ -88,6 +88,15 @@ recipe claim-in-sync
     seal claim:sites
     test { scripts/check-claim.sh }
 
+# The R2 cache Worker answers cook's own client, so its e2e drives the cook built
+# here: a client change that breaks the wire protocol fails this recipe.
+files cache-worker:sources
+    "cache-worker/src/**" "cache-worker/test/**" "cache-worker/package.json" "cache-worker/pnpm-lock.yaml"
+
+recipe cache-worker: cook-bin
+    seal cache-worker:sources
+    test { bin="$(realpath $<cook-bin>)" && cd cache-worker && pnpm install --frozen-lockfile && COOK_BIN="$bin" pnpm test }
+
 # ── chores ──────────────────────────────────────────────────────────────────
 
 # `target` is a Rust host triple and must equal the build host.

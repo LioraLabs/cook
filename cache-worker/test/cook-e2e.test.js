@@ -24,7 +24,9 @@ const COOKFILE = `recipe widget
     }
 `;
 
-test("cook shares builds through the Worker", { skip: runnable ? false : `cook not runnable (${COOK}): ${probe.error ?? probe.stderr}` }, async (t) => {
+// Skipping is for a bare `pnpm test` without cook; a gate that names COOK_BIN must not pass on a skip.
+test("cook shares builds through the Worker", { skip: runnable || process.env.COOK_BIN ? false : `cook not runnable (${COOK}): ${probe.error ?? probe.stderr}` }, async (t) => {
+  assert.ok(runnable, `COOK_BIN is not runnable (${COOK}): ${probe.error ?? probe.stderr}`);
   const worker = await startWorker();
   const root = mkdtempSync(join(tmpdir(), "cook-e2e-"));
   t.after(async () => {
