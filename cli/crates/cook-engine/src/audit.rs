@@ -242,8 +242,13 @@ fn trace_calls(text: &str, start_cwd: &Path) -> Vec<(u32, String, Access)> {
             rest.to_string()
         };
         let Some((name, after)) = call.split_once('(') else { continue };
-        let Some(split) = after.rfind(") = ") else { continue };
-        let (args, ret) = (&after[..split], after[split + 4..].trim());
+        // strace pads a short line's `= ret` to column 40: `)` then one or more spaces.
+        let Some((args, ret)) = after
+            .rmatch_indices(" = ")
+            .find_map(|(i, _)| after[..i].trim_end_matches(' ').strip_suffix(')').map(|a| (a, after[i + 3..].trim())))
+        else {
+            continue;
+        };
         let cwd = cwds.entry(pid).or_insert_with(|| start_cwd.to_path_buf()).clone();
         let args = split_args(args);
         let mut base = cwd.clone();

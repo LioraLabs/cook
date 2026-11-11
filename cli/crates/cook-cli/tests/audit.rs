@@ -654,7 +654,11 @@ fn the_audits_private_variables_never_surface() {
 
 #[test]
 fn processes_that_read_no_variable_report_none() {
-    let dir = project("recipe quiet\n    seal \"src/a.ts\"\n    test { true }\n    test { cat src/a.ts >/dev/null }\n");
+    // A dynamic no-op of our own, not cat: uutils cat (Ubuntu 26.04) reads NO_COLOR and friends.
+    let dir = project("recipe quiet\n    seal \"src/a.ts\" \"tools/noop\"\n    test { true }\n    test { ./tools/noop }\n");
+    if !build_noop(dir.path(), "noop", &[]) {
+        return;
+    }
     let xdg = TempDir::new().unwrap();
     let Some(out) = audit(dir.path(), xdg.path(), &["quiet", "--json"]) else { return };
     let doc = json(&out);
@@ -727,22 +731,23 @@ fn locale_and_home_queries_are_not_findings() {
 
 // --- statically linked programs ----------------------------------------------
 
-/// Builds `tools/stat` (a static no-op) in the project; false when this host
-/// cannot link statically and is allowed to skip.
-fn build_static(dir: &Path) -> bool {
+/// Builds `tools/<name>` (a no-op, linked with `flags`) in the project; false when
+/// this host cannot build it and is allowed to skip.
+fn build_noop(dir: &Path, name: &str, flags: &[&str]) -> bool {
     let require = std::env::var("COOK_AUDIT_E2E").is_ok_and(|v| v == "require");
     fs::create_dir_all(dir.join("tools")).unwrap();
-    let c = dir.join("tools/stat.c");
+    let c = dir.join(format!("tools/{name}.c"));
     fs::write(&c, "int main(void) { return 0; }\n").unwrap();
     let ok = Command::new("cc")
-        .args(["-static", "-o"])
-        .arg(dir.join("tools/stat"))
+        .args(flags)
+        .arg("-o")
+        .arg(dir.join("tools").join(name))
         .arg(&c)
         .status()
         .is_ok_and(|s| s.success());
-    assert!(ok || !require, "COOK_AUDIT_E2E=require but `cc -static` failed");
+    assert!(ok || !require, "COOK_AUDIT_E2E=require but `cc {flags:?}` failed");
     if !ok {
-        eprintln!("skipping: cc -static unavailable");
+        eprintln!("skipping: cc {flags:?} unavailable");
     }
     fs::remove_file(&c).unwrap();
     ok
@@ -761,7 +766,7 @@ fn unobserved_roots(doc: &serde_json::Value) -> Vec<String> {
 #[test]
 fn a_statically_linked_program_is_named_as_env_not_observed() {
     let dir = project("recipe lint\n    seal \"src/a.ts\" \"tools/stat\"\n    test { ./tools/stat }\n");
-    if !build_static(dir.path()) {
+    if !build_noop(dir.path(), "stat", &["-static"]) {
         return;
     }
     let xdg = TempDir::new().unwrap();
@@ -1230,7 +1235,9 @@ attack() {
         [ -d "$d" ] || continue
         printf %s "$J" > "$d/handback"; mkdir -p "$d/handback.tmp"
     done 2>/dev/null
-    fd=3; while [ $fd -le 30 ]; do eval "printf %s \"\$FRAME\" >&$fd" 2>/dev/null; fd=$((fd+1)); done
+    # In a subshell: dash (Ubuntu's sh) cannot parse `>&10` and exits the shell; the
+    # /proc sweep below still reaches this shell's own fds 10.. by path.
+    fd=3; while [ $fd -le 30 ]; do (eval "printf %s \"\$FRAME\" >&$fd") 2>/dev/null; fd=$((fd+1)); done
     # Appended, not truncated: a truncated trace file only hides the forger from the audit.
     for f in /proc/[0-9]*/fd/*; do printf %s "$FRAME" >> "$f"; done 2>/dev/null
 }
@@ -1254,17 +1261,17 @@ fn a_unit_cannot_forge_what_baseline_persists() {
     assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(fs::read_to_string(&canary).unwrap(), "canary", "the forger reached a host fd");
     let b = baseline_json(dir.path());
-    let entries: Vec<&str> = b["recipes"]["lint"]
+    let entries: Vec<(&str, &str)> = b["recipes"]["lint"]
         .as_object()
         .unwrap()
-        .values()
-        .flat_map(|v| v.as_array().unwrap())
-        .map(|e| e.as_str().unwrap())
+        .iter()
+        .flat_map(|(k, v)| v.as_array().unwrap().iter().map(move |e| (k.as_str(), e.as_str().unwrap())))
         .collect();
-    assert!(entries.contains(&".lintrc"), "{b}");
-    assert!(entries.iter().all(|e| !e.contains('*')), "{b}");
+    assert!(entries.contains(&("read", ".lintrc")), "{b}");
+    assert!(entries.iter().all(|(_, e)| !e.contains('*')), "{b}");
     // System reads are genuine too; nothing from the project but what was read.
-    let project: Vec<_> = entries.iter().filter(|e| !e.starts_with(['/', '~'])).collect();
+    // `env` holds variable names, not paths (uutils cat reads CLICOLOR_FORCE and friends).
+    let project: Vec<_> = entries.iter().filter(|(k, e)| *k != "env" && !e.starts_with(['/', '~'])).map(|(_, e)| e).collect();
     assert!(project.iter().all(|e| [".lintrc", "src/a.ts", "forger.sh"].contains(e)), "{b}");
 
     // The next audit accepts only what was genuinely read.

@@ -722,6 +722,26 @@ fn split_execve_and_open_lines_are_joined() {
     assert_eq!(unobserved(&t), vec![PathBuf::from("/start/tools/other")]);
 }
 
+/// strace pads a short line's return value to column 40, as dash's vfork'd
+/// child resumes its execve (verbatim from strace 6.19 on Ubuntu 26.04).
+#[test]
+fn a_padded_resumed_execve_starts_a_segment() {
+    let t = "5438  vfork( <unfinished ...>\n\
+             5439  execve(\"./tools/stat\", [\"./tools/stat\"], 0x55bf90127560 /* 6 vars */ <unfinished ...>\n\
+             5438  <... vfork resumed>)              = 5439\n\
+             5439  <... execve resumed>)             = 0\n\
+             5439  exit_group(0)                     = ?\n";
+    assert_eq!(unobserved(t), vec![PathBuf::from("/start/tools/stat")]);
+}
+
+#[test]
+fn a_padded_short_read_is_parsed() {
+    let t = "7 openat(AT_FDCWD</d>, \"x\", O_RDONLY <unfinished ...>\n\
+             7 <... openat resumed>)            = 3</d/x>\n\
+             8 access(\"/y\", R_OK)               = 0";
+    assert_eq!(acc(t), vec![("/d/x".into(), false, false), ("/y".into(), false, false)]);
+}
+
 fn uncovered_with(paths: &[(&str, bool)], coverage: &Coverage) -> Vec<String> {
     let t: String = paths
         .iter()
